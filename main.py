@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from sqlalchemy import String, select
+from sqlalchemy import String, select, ForeignKey, DateTime
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from pwdlib import PasswordHash
