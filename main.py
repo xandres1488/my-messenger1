@@ -378,7 +378,34 @@ function startChat() {
     };
 }
 
+async function loadUsers() {
 
+    const response = await fetch("/users");
+    const users = await response.json();
+
+    const userList =
+        document.getElementById("userList");
+
+    userList.innerHTML = "";
+
+    users.forEach(function(user) {
+
+        const card =
+            document.createElement("div");
+
+        card.className = "user-card";
+
+        if (user.username === username) {
+            card.textContent =
+                "👤 " + user.username + " — Вы";
+        } else {
+            card.textContent =
+                "👤 " + user.username;
+        }
+
+        userList.appendChild(card);
+    });
+}
 function sendMessage() {
 
     const text = input.value.trim();
