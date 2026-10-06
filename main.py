@@ -36,7 +36,7 @@ engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 password_hash = PasswordHash.recommended()
 
-app = FastAPI(title="RayfGram 1.0")
+app = FastAPI(title="RayfGram")
 
 
 class Base(DeclarativeBase):
@@ -827,7 +827,7 @@ HTML = r"""
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>RayfGram 1.0</title>
+<title>RayfGram</title>
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#0e1621;color:#fff;height:100vh;overflow:hidden}
 button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{display:none!important}
@@ -837,7 +837,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .field{width:100%;padding:14px 15px;border-radius:12px;border:1px solid #2a3a48;background:#0e1621;color:#fff;margin:7px 0;outline:0}
 .primary{background:#2aabee;color:#fff;padding:13px 18px;border-radius:12px;width:100%;font-weight:700;margin-top:8px}.switch{color:#2aabee;background:none;margin-top:14px;width:100%}
 #app{height:100vh;display:flex}.sidebar{width:360px;max-width:38%;background:#17212b;border-right:1px solid #253442;display:flex;flex-direction:column}
-.top{padding:13px 14px;border-bottom:1px solid #253442}.brand{font-size:22px;font-weight:800}.toprow{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.top{padding:13px 14px;border-bottom:1px solid #253442}.brand{font-size:23px;font-weight:800;letter-spacing:-.4px}.toprow{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .icon{background:none;color:#b8c8d3;font-size:22px;padding:7px;border-radius:9px}.icon:hover{background:#223442}
 .search{background:#0e1621;border:0;border-radius:10px;color:#fff;width:100%;padding:11px 13px;outline:0}
 .userlist{overflow:auto;flex:1}.user{display:flex;gap:11px;align-items:center;padding:12px 14px;border-bottom:1px solid #20303c}.user:hover,.user.active{background:#223442}
@@ -852,9 +852,38 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .file{display:block;margin:4px 0;color:#fff;text-decoration:none;background:#ffffff14;border-radius:8px;padding:9px}.file:hover{background:#ffffff22}
 .composer{display:flex;gap:7px;padding:9px 12px;background:#17212b;border-top:1px solid #253442;align-items:flex-end}.attach{font-size:22px}.composer textarea{flex:1;resize:none;max-height:120px;border:0;background:#0e1621;color:#fff;border-radius:12px;padding:11px;outline:0}.send{background:#2aabee;color:#fff;border-radius:12px;padding:11px 16px;font-weight:700}
 .context{position:fixed;background:#17212b;border:1px solid #2d4150;border-radius:12px;box-shadow:0 10px 35px #0008;padding:6px;z-index:20}.context button{display:block;background:none;color:#fff;padding:10px 15px;width:150px;text-align:left;border-radius:8px}.context button:hover{background:#223442}
-.drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}.save{background:#2aabee;color:#fff;border-radius:10px;padding:12px;width:100%;margin-top:10px}
+.drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}
+.verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
+.verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
+.profile-page{padding:10px 4px 30px}
+.profile-hero{text-align:center;padding:10px 0 20px}
+.profile-hero .profile-avatar{width:124px;height:124px;margin:8px auto 14px;border-radius:50%;font-size:42px;background:#2aabee;display:grid;place-items:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #202b35,0 12px 35px #0007}
+.profile-hero .profile-avatar img{width:100%;height:100%;object-fit:cover}
+.profile-name{font-size:28px;font-weight:800;letter-spacing:-.5px}
+.profile-username{color:#8ea2b1;margin-top:5px;font-size:15px}
+.profile-status{margin-top:8px;color:#8ea2b1;font-size:14px}
+.profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:10px 0 18px}
+.profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
+.profile-action span{display:block;font-size:23px;margin-bottom:3px}
+.profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
+.profile-row{padding:14px 16px;border-bottom:1px solid #252a30}
+.profile-row:last-child{border-bottom:0}
+.profile-label{font-size:13px;color:#8996a3;margin-bottom:4px}
+.profile-value{font-size:16px;word-break:break-word}
+.profile-verified{color:#2aabee;font-weight:700;margin-top:10px}
+.profile-section{margin:16px 4px 8px;color:#8b9aa8;font-size:13px;font-weight:700}
+.profile-edit .field{margin-bottom:8px}
+.save{background:#2aabee;color:#fff;border-radius:10px;padding:12px;width:100%;margin-top:10px}
 .toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#263b4a;color:#fff;padding:11px 16px;border-radius:10px;z-index:30;box-shadow:0 5px 25px #0008}
-@media(max-width:700px){.sidebar{max-width:none;width:100%}.chat{display:none}.sidebar.chat-open{display:none}.chat.chat-open{display:flex}.chathead .back{display:block}.messages{padding:14px 4%}.bubble{max-width:84%}}
+@media(max-width:700px){.panel{width:100%;padding:14px 16px}.drawer{background:#0e1621}.sidebar{max-width:none;width:100%}.chat{display:none}.sidebar.chat-open{display:none}.chat.chat-open{display:flex}.chathead .back{display:block}.messages{padding:14px 4%}.bubble{max-width:84%}}
+
+.bottom-nav{display:none}
+@media(max-width:700px){
+ .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:8px 10px 10px;padding:5px;background:#20262d;border:1px solid #2a3037;border-radius:28px}
+ .bottom-nav button{background:transparent;color:#aeb8c1;border:0;border-radius:22px;padding:8px 3px;font-size:11px;font-weight:700}
+ .bottom-nav button.active{background:#353b43;color:#fff}
+ .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
+}
 </style>
 </head>
 <body>
@@ -880,10 +909,16 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 <div id="app" class="hidden">
  <aside class="sidebar" id="sidebar">
   <div class="top">
-   <div class="toprow"><span class="brand">✈️ RayfGram <small style="color:#2aabee">2.0</small></span><span><button class="icon" onclick="openCommunities()">👥</button><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
+   <div class="toprow"><span class="brand">RayfGram</span><span><button class="icon" onclick="openCommunities()">👥</button><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
    <input id="search" class="search" placeholder="🔍 Найти пользователя или чат" oninput="loadUsers()">
  </div>
  <div id="userlist" class="userlist"></div>
+ <nav class="bottom-nav">
+   <button class="active" onclick="navChats()"><span class="nav-ico">💬</span>Чаты</button>
+   <button onclick="navContacts()"><span class="nav-ico">👤</span>Контакты</button>
+   <button onclick="openSettings()"><span class="nav-ico">⚙️</span>Настройки</button>
+   <button onclick="openProfile()"><span class="nav-ico">◉</span>Профиль</button>
+ </nav>
  </aside>
  <main class="chat" id="chat">
   <div class="chathead">
@@ -918,6 +953,11 @@ const $=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function initials(u){return esc((u?.display_name||u?.username||'?').slice(0,1).toUpperCase());}
 function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;}
+function verifiedBadge(){return '<span class="verified-badge" aria-label="Подтверждённый аккаунт"></span>';}
+function navChats(){closeChat();loadUsers();setNav(0);}
+function navContacts(){$('search').focus();$('search').value='';loadUsers();setNav(1);}
+function setNav(i){document.querySelectorAll('.bottom-nav button').forEach((b,n)=>b.classList.toggle('active',n===i));}
+
 async function api(url,opt={}){opt.headers=opt.headers||{};if(token)opt.headers.Authorization='Bearer '+token;let r=await fetch(url,opt);if(!r.ok){let t=await r.text();throw new Error(t||'Ошибка');}return r.json();}
 function showToast(t){$('toast').textContent=t;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2500);}
 function showRegister(){$('loginBox').classList.add('hidden');$('regBox').classList.remove('hidden')}
@@ -951,7 +991,7 @@ function handleWS(d){
 function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected?.id!==m.sender_id && 'Notification' in window && Notification.permission==='granted'){new Notification('RayfGram',{body:m.text||'📎 Файл'})}}
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?'☑️':''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
  try{
@@ -966,7 +1006,7 @@ async function selectUser(id){
  renderUsers();
 }
 function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
-function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').textContent=selected.display_name;$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
+function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').innerHTML=esc(selected.display_name)+' '+(selected.verified?verifiedBadge():'');$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
  if(!selected)return;
@@ -1011,7 +1051,30 @@ function xorSecret(text){let key=localStorage.getItem('rayf_secret_key');if(!key
 async function startVoice(){if(!selected)return;try{let stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=async()=>{let blob=new Blob(audioChunks,{type:'audio/webm'});pendingFile=new File([blob],'voice-message.webm',{type:'audio/webm'});await sendMessage();stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();showToast('🎤 Запись до 15 секунд…');setTimeout(()=>{if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop()},15000)}catch(e){showToast('Разреши микрофон для голосового сообщения')}}
 async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){showToast('Звонки не поддерживаются');return}try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:selected.id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};let offer=await pc.createOffer();await pc.setLocalDescription(offer);ws.send(JSON.stringify({type:'call_offer',peer_id:selected.id,sdp:offer}));showToast('📞 Звоним…')}catch(e){showToast('Разреши микрофон')}}
 async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:d.from_id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);ws.send(JSON.stringify({type:'call_answer',peer_id:d.from_id,sdp:ans}))}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
-function openPublicProfile(username){api('/api/profile/'+encodeURIComponent(username)).then(u=>openDrawer(`<h2>👤 Профиль</h2><div class="profile-big">${avatarHtml(u,'avatar')}</div><h2>${esc(u.display_name)} ${u.verified?'☑️':''}</h2><p>@${esc(u.username)}</p><p style="color:#a8bac7">${esc(u.bio||'Нет информации')}</p><p>${u.online?'🟢 онлайн':'⚪ офлайн'}</p>`)).catch(e=>showToast(e.message))}
+function openPublicProfile(username){
+ api('/api/profile/'+encodeURIComponent(username)).then(u=>{
+   const v=u.verified?verifiedBadge():'';
+   openDrawer(`<div class="profile-page">
+     <div class="profile-hero">
+       <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
+       <div class="profile-name">${esc(u.display_name||u.username)} ${v}</div>
+       <div class="profile-username">@${esc(u.username)} ${v}</div>
+       <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
+     </div>
+     <div class="profile-actions">
+       <button class="profile-action" onclick="closeDrawer();selectUser(${u.id})"><span>💬</span>Написать</button>
+       <button class="profile-action" onclick="showToast('Профиль открыт')"><span>👤</span>Профиль</button>
+       <button class="profile-action" onclick="showToast('Дополнительно')"><span>⋮</span>Ещё</button>
+     </div>
+     <div class="profile-section">Информация</div>
+     <div class="profile-info">
+       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(u.username)} ${v}</div></div>
+       <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
+       <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
+     </div>
+   </div>`);
+ }).catch(e=>showToast(e.message))
+}
 function openCommunities(){openDrawer(`<h2>👥 Сообщества</h2><button class="save" onclick="createGroup()">➕ Создать группу</button><button class="save" onclick="createChannel()">📢 Создать канал</button><button class="save" onclick="joinCommunity()">🔗 Войти по invite-коду</button><div id="communityList" style="margin-top:15px"></div>`);loadCommunities()}
 async function loadCommunities(){try{let gs=await api('/api/groups'),cs=await api('/api/channels');$('communityList').innerHTML='<h3>Группы</h3>'+gs.map(g=>`<div class="user" onclick="selectGroup(${g.id})"><div class="uinfo"><div>👥 ${esc(g.name)}</div><div class="preview">Invite: ${esc(g.invite_code)}</div></div></div>`).join('')+'<h3>Каналы</h3>'+cs.map(c=>`<div class="user" onclick="selectChannel(${c.id})"><div class="uinfo"><div>📢 ${esc(c.name)} @${esc(c.username)}</div><div class="preview">Invite: ${esc(c.invite_code)}</div></div></div>`).join('')||'<p>Пока пусто</p>'}catch(e){}}
 async function createGroup(){let n=prompt('Название группы');if(!n)return;let fd=new FormData();fd.append('name',n);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана');loadCommunities()}catch(e){showToast(e.message)}}
@@ -1027,10 +1090,37 @@ function renderCommunityMessage(m){let row=document.createElement('div');row.cla
 function openDrawer(html){$('panelContent').innerHTML=html;$('drawer').classList.remove('hidden')}
 function closeDrawer(){$('drawer').classList.add('hidden')}
 function openProfile(){
- openDrawer(`<h2>👤 Профиль</h2><div class="profile-big">${avatarHtml(me,'avatar')}</div>
- <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()"><button class="save" onclick="avatarPick.click()">📷 Изменить аватар</button>
- <label>Имя</label><input id="pname" class="field" value="${esc(me.display_name)}"><label>О себе</label><textarea id="pbio" class="field" rows="4">${esc(me.bio)}</textarea>
- <button class="save" onclick="saveProfile()">Сохранить</button><p style="color:#8da1af">@${esc(me.username)}</p>`)
+ const v=me?.verified?verifiedBadge():'';
+ const status=me?.online?'🟢 в сети':'⚪ офлайн';
+ openDrawer(`<div class="profile-page">
+   <div class="profile-hero">
+     <div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div>
+     <div class="profile-name">${esc(me.display_name||me.username)} ${v}</div>
+     <div class="profile-username">@${esc(me.username)}</div>
+     <div class="profile-status">${status}</div>
+   </div>
+   <div class="profile-actions">
+     <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
+     <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
+     <button class="profile-action" onclick="openSettings()"><span>⚙️</span>Настройки</button>
+   </div>
+   <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
+   <div class="profile-section">Информация</div>
+   <div class="profile-info">
+     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)} ${v}</div></div>
+     <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
+     <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
+   </div>
+   <div id="profileEditBox"></div>
+ </div>`);
+}
+function startProfileEdit(){
+ const box=$('profileEditBox');
+ if(!box)return;
+ box.innerHTML=`<div class="profile-section">Редактирование</div>
+ <div class="profile-edit"><input id="pname" class="field" value="${esc(me.display_name)}" placeholder="Имя"><textarea id="pbio" class="field" rows="4" placeholder="О себе">${esc(me.bio)}</textarea>
+ <button class="save" onclick="saveProfile()">Сохранить изменения</button></div>`;
+ box.scrollIntoView({behavior:'smooth'});
 }
 async function saveProfile(){try{let fd=new FormData();fd.append('display_name',$('pname').value);fd.append('bio',$('pbio').value);me=await api('/api/profile',{method:'POST',body:fd});showToast('Профиль сохранён');loadUsers()}catch(e){showToast(e.message)}}
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
@@ -1038,7 +1128,7 @@ function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
  <p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
- <p style="color:#8da1af;margin-top:30px">RayfGram 1.0 · приватный мессенджер</p>
+ <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
 }
 async function setup2FA(){try{let d=await api('/api/2fa/setup',{method:'POST'});let code=prompt('Секрет 2FA: '+d.secret+'\nДобавь его в Authenticator и введи текущий 6-значный код');if(!code)return;let fd=new FormData();fd.append('code',code);await api('/api/2fa/enable',{method:'POST',body:fd});showToast('🔐 2FA включена')}catch(e){showToast(e.message)}}
