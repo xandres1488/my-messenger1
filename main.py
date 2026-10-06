@@ -124,7 +124,18 @@ button.secondary {
 #chat {
     display: none;
 }
+#users {
+    display: none;
+    padding: 20px;
+}
 
+.user-card {
+    background: #374151;
+    padding: 15px;
+    margin-bottom: 10px;
+    border-radius: 14px;
+    font-size: 18px;
+}
 #messages {
     height: calc(100vh - 150px);
     overflow-y: auto;
