@@ -417,16 +417,24 @@ async function loadUsers() {
 
         card.className = "user-card";
 
-        if (user.username === username) {
-            card.textContent =
-                "👤 " + user.username + " — Вы";
-        } else {
-            card.textContent =
-                "👤 " + user.username;
-        }
+     if (user.username === username) {
+    card.textContent =
+        "👤 " + user.username + " — Вы";
+} else {
+    card.textContent =
+        "👤 " + user.username;
 
-        userList.appendChild(card);
-    });
+    card.onclick = function() {
+        selectedUserId = user.id;
+        selectedUsername = user.username;
+
+        alert("Вы выбрали: " + selectedUsername);
+    };
+}
+
+userList.appendChild(card);
+        
+    }
 }
 function sendMessage() {
 
