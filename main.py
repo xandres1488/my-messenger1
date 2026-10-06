@@ -262,6 +262,9 @@ let token = localStorage.getItem("token");
 let username = localStorage.getItem("username");
 let socket = null;
 
+let selectedUserId = null;
+let selectedUsername = null;
+
 const auth = document.getElementById("auth");
 const chat = document.getElementById("chat");
 const result = document.getElementById("result");
