@@ -624,7 +624,22 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
 
             message = await websocket.receive_text()
+if message.startswith("TO:"):
+    parts = message.split(":", 2)
 
+    receiver_id = int(parts[1])
+    message_text = parts[2]
+
+    async with SessionLocal() as db:
+
+        new_message = Message(
+            sender_id=payload["user_id"],
+            receiver_id=receiver_id,
+            text=message_text
+        )
+
+        db.add(new_message)
+        await db.commit()
             text = f"{username}: {message}"
 
             for connection in list(connections):
