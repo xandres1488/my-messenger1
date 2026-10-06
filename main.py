@@ -2,6 +2,12 @@ import os
 import json
 import base64
 import mimetypes
+import secrets
+import hmac
+import hashlib
+import struct
+import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -48,6 +54,8 @@ class User(Base):
     avatar_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    totp_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Message(Base):
@@ -63,6 +71,77 @@ class Message(Base):
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reply_to_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    secret: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Group(Base):
+    __tablename__ = "groups"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(String(500), default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    invite_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class GroupMember(Base):
+    __tablename__ = "group_members"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class GroupMessage(Base):
+    __tablename__ = "group_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    text: Mapped[str] = mapped_column(Text, default="")
+    file_data: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    file_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    file_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    reply_to_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class Channel(Base):
+    __tablename__ = "channels"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(500), default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    invite_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class ChannelMember(Base):
+    __tablename__ = "channel_members"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+
+
+class ChannelPost(Base):
+    __tablename__ = "channel_posts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Reaction(Base):
+    __tablename__ = "reactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    emoji: Mapped[str] = mapped_column(String(16))
 
 
 async def init_db():
@@ -86,6 +165,13 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ")
         await conn.exec_driver_sql("UPDATE messages SET edited = FALSE WHERE edited IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET deleted = FALSE WHERE deleted IS NULL")
+        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)")
+        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
+        await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER")
+        await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE")
+        await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
+        await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
+        await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
 
 
 @app.on_event("startup")
@@ -129,6 +215,8 @@ def user_public(user: User, online: bool = False) -> dict:
         "online": online,
         "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
+        "verified": user.username.lower() == "rayf",
+        "twofa": bool(user.totp_enabled),
     }
 
 
@@ -146,6 +234,9 @@ def msg_public(m: Message) -> dict:
         "deleted": m.deleted,
         "read": m.read_at is not None,
         "read_at": m.read_at.isoformat() if m.read_at else None,
+        "reply_to_id": m.reply_to_id,
+        "pinned": bool(m.pinned),
+        "secret": bool(m.secret),
     }
 
 
@@ -166,6 +257,35 @@ async def send_ws(user_id: int, data: dict):
 async def home():
     return HTMLResponse(HTML)
 
+
+
+def totp_now(secret: str, step: int = 30, digits: int = 6) -> str:
+    key = base64.b32decode(secret + "=" * ((8 - len(secret) % 8) % 8), casefold=True)
+    counter = int(time.time() // step)
+    msg = struct.pack(">Q", counter)
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    off = digest[-1] & 15
+    code = (struct.unpack(">I", digest[off:off+4])[0] & 0x7fffffff) % (10 ** digits)
+    return str(code).zfill(digits)
+
+def verify_totp(secret: str, code: str) -> bool:
+    if not secret or not code.isdigit():
+        return False
+    now = int(time.time() // 30)
+    for offset in (-1, 0, 1):
+        key = base64.b32decode(secret + "=" * ((8 - len(secret) % 8) % 8), casefold=True)
+        digest = hmac.new(key, struct.pack(">Q", now + offset), hashlib.sha1).digest()
+        off = digest[-1] & 15
+        value = (struct.unpack(">I", digest[off:off+4])[0] & 0x7fffffff) % 1000000
+        if hmac.compare_digest(str(value).zfill(6), code):
+            return True
+    return False
+
+def group_public(g: Group) -> dict:
+    return {"id": g.id, "name": g.name, "description": g.description, "invite_code": g.invite_code, "owner_id": g.owner_id}
+
+def channel_public(c: Channel) -> dict:
+    return {"id": c.id, "name": c.name, "username": c.username, "description": c.description, "invite_code": c.invite_code, "owner_id": c.owner_id}
 
 @app.post("/api/register")
 async def register(username: str = Form(...), password: str = Form(...), display_name: str = Form("")):
@@ -192,12 +312,15 @@ async def register(username: str = Form(...), password: str = Form(...), display
 
 
 @app.post("/api/login")
-async def login(username: str = Form(...), password: str = Form(...)):
+async def login(username: str = Form(...), password: str = Form(...), code: str = Form("")):
     username = username.strip().lower()
     async with SessionLocal() as db:
         user = await db.scalar(select(User).where(User.username == username))
         if not user or not password_hash.verify(password, user.password_hash):
             raise HTTPException(401, "Неверный username или пароль")
+        if user.totp_enabled:
+            if not verify_totp(user.totp_secret or "", code.strip()):
+                return JSONResponse({"twofa_required": True, "message": "Введите код 2FA из приложения-аутентификатора"}, status_code=200)
         user.last_seen = datetime.now(timezone.utc)
         await db.commit()
         return {"token": make_token(user.id), "user": user_public(user)}
@@ -293,6 +416,144 @@ async def messages(other_id: int, request: Request):
         return [msg_public(m) for m in rows]
 
 
+
+@app.get("/api/profile/{username}")
+async def public_profile(username: str):
+    async with SessionLocal() as db:
+        u = await db.scalar(select(User).where(User.username == username.strip().lower()))
+        if not u:
+            raise HTTPException(404, "Пользователь не найден")
+        return user_public(u, u.id in connections)
+
+@app.post("/api/2fa/setup")
+async def twofa_setup(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        u = await db.get(User, user.id)
+        if not u.totp_secret:
+            u.totp_secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+            await db.commit()
+        uri = "otpauth://totp/RayfGram:" + urllib.parse.quote(u.username) + "?secret=" + u.totp_secret + "&issuer=RayfGram"
+        return {"secret": u.totp_secret, "otpauth": uri, "enabled": bool(u.totp_enabled)}
+
+@app.post("/api/2fa/enable")
+async def twofa_enable(code: str = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        u = await db.get(User, user.id)
+        if not u.totp_secret or not verify_totp(u.totp_secret, code.strip()):
+            raise HTTPException(400, "Неверный код 2FA")
+        u.totp_enabled = True
+        await db.commit()
+        return {"enabled": True}
+
+@app.post("/api/2fa/disable")
+async def twofa_disable(code: str = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        u = await db.get(User, user.id)
+        if not u.totp_enabled or not verify_totp(u.totp_secret or "", code.strip()):
+            raise HTTPException(400, "Неверный код 2FA")
+        u.totp_enabled = False
+        await db.commit()
+        return {"enabled": False}
+
+@app.post("/api/groups")
+async def create_group(name: str = Form(...), description: str = Form(""), user: User = Depends(current_user)):
+    name = name.strip()[:100]
+    if not name: raise HTTPException(400, "Название группы обязательно")
+    async with SessionLocal() as db:
+        g = Group(name=name, description=description.strip()[:500], owner_id=user.id, invite_code=secrets.token_urlsafe(10))
+        db.add(g); await db.flush()
+        db.add(GroupMember(group_id=g.id, user_id=user.id, is_admin=True))
+        await db.commit(); await db.refresh(g)
+        return group_public(g)
+
+@app.get("/api/groups")
+async def my_groups(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        r = await db.execute(select(Group).join(GroupMember, Group.id == GroupMember.group_id).where(GroupMember.user_id == user.id))
+        return [group_public(g) for g in r.scalars().all()]
+
+@app.post("/api/groups/join/{code}")
+async def join_group(code: str, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        g = await db.scalar(select(Group).where(Group.invite_code == code))
+        if not g: raise HTTPException(404, "Группа не найдена")
+        exists = await db.scalar(select(GroupMember).where(GroupMember.group_id == g.id, GroupMember.user_id == user.id))
+        if not exists:
+            db.add(GroupMember(group_id=g.id, user_id=user.id))
+            await db.commit()
+        return group_public(g)
+
+@app.get("/api/groups/{group_id}/messages")
+async def group_messages(group_id: int, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        member = await db.scalar(select(GroupMember).where(GroupMember.group_id == group_id, GroupMember.user_id == user.id))
+        if not member: raise HTTPException(403, "Вы не участник")
+        r = await db.execute(select(GroupMessage).where(GroupMessage.group_id == group_id).order_by(GroupMessage.created_at).limit(500))
+        rows = r.scalars().all()
+        return [{"id":m.id,"sender_id":m.sender_id,"group_id":m.group_id,"text":m.text,"file_name":m.file_name,"file_url":f"/api/group-file/{m.id}" if m.file_data else None,"created_at":m.created_at.isoformat(),"reply_to_id":m.reply_to_id,"pinned":m.pinned} for m in rows]
+
+@app.post("/api/channels")
+async def create_channel(name: str = Form(...), username: str = Form(...), description: str = Form(""), user: User = Depends(current_user)):
+    username=username.strip().lower().lstrip("@")
+    if not username or not username.replace("_","").isalnum(): raise HTTPException(400,"Некорректный username канала")
+    async with SessionLocal() as db:
+        if await db.scalar(select(Channel).where(Channel.username == username)): raise HTTPException(400,"Такой канал уже есть")
+        c=Channel(name=name.strip()[:100],username=username[:32],description=description.strip()[:500],owner_id=user.id,invite_code=secrets.token_urlsafe(10))
+        db.add(c); await db.flush(); db.add(ChannelMember(channel_id=c.id,user_id=user.id)); await db.commit(); await db.refresh(c)
+        return channel_public(c)
+
+@app.get("/api/channels")
+async def channels(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        r=await db.execute(select(Channel).join(ChannelMember, Channel.id==ChannelMember.channel_id).where(ChannelMember.user_id==user.id))
+        return [channel_public(c) for c in r.scalars().all()]
+
+@app.post("/api/channels/join/{code}")
+async def join_channel(code: str, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        c=await db.scalar(select(Channel).where(Channel.invite_code==code))
+        if not c: raise HTTPException(404,"Канал не найден")
+        if not await db.scalar(select(ChannelMember).where(ChannelMember.channel_id==c.id,ChannelMember.user_id==user.id)):
+            db.add(ChannelMember(channel_id=c.id,user_id=user.id)); await db.commit()
+        return channel_public(c)
+
+
+@app.get("/api/channels/{channel_id}/messages")
+async def channel_messages(channel_id:int,user:User=Depends(current_user)):
+    async with SessionLocal() as db:
+        member=await db.scalar(select(ChannelMember).where(ChannelMember.channel_id==channel_id,ChannelMember.user_id==user.id))
+        if not member: raise HTTPException(403,"Вы не подписаны")
+        r=await db.execute(select(ChannelPost).where(ChannelPost.channel_id==channel_id).order_by(ChannelPost.created_at).limit(500))
+        return [{"id":p.id,"channel_id":p.channel_id,"sender_id":p.sender_id,"text":p.text,"created_at":p.created_at.isoformat(),"pinned":p.pinned} for p in r.scalars().all()]
+
+@app.post("/api/pin/{message_id}")
+async def pin_message(message_id:int,user:User=Depends(current_user)):
+    async with SessionLocal() as db:
+        m=await db.get(Message,message_id)
+        if not m or m.sender_id!=user.id and m.receiver_id!=user.id: raise HTTPException(404,"Сообщение не найдено")
+        m.pinned=not m.pinned; await db.commit()
+        payload={"type":"message_update","message":msg_public(m)}
+        await send_ws(m.sender_id,payload); await send_ws(m.receiver_id,payload)
+        return msg_public(m)
+
+@app.post("/api/react/{message_id}")
+async def react(message_id:int, emoji:str=Form(...), user:User=Depends(current_user)):
+    emoji=emoji.strip()[:8]
+    async with SessionLocal() as db:
+        m=await db.get(Message,message_id)
+        if not m or (m.sender_id!=user.id and m.receiver_id!=user.id): raise HTTPException(404,"Сообщение не найдено")
+        old=await db.scalar(select(Reaction).where(Reaction.message_id==message_id,Reaction.user_id==user.id))
+        if old: old.emoji=emoji
+        else: db.add(Reaction(message_id=message_id,user_id=user.id,emoji=emoji))
+        await db.commit()
+        return {"message_id":message_id,"emoji":emoji}
+
+@app.get("/api/reactions/{message_id}")
+async def reactions(message_id:int,user:User=Depends(current_user)):
+    async with SessionLocal() as db:
+        r=await db.execute(select(Reaction).where(Reaction.message_id==message_id))
+        return [{"user_id":x.user_id,"emoji":x.emoji} for x in r.scalars().all()]
+
 @app.post("/api/profile")
 async def profile(request: Request, display_name: str = Form(...), bio: str = Form("")):
     user = await current_user(request)
@@ -371,6 +632,16 @@ async def search(request: Request):
         return [msg_public(m) for m in rows]
 
 
+
+@app.get("/api/group-file/{message_id}")
+async def get_group_file(message_id:int,user:User=Depends(current_user)):
+    async with SessionLocal() as db:
+        m=await db.get(GroupMessage,message_id)
+        if not m or not m.file_data: raise HTTPException(404)
+        member=await db.scalar(select(GroupMember).where(GroupMember.group_id==m.group_id,GroupMember.user_id==user.id))
+        if not member: raise HTTPException(403)
+        return Response(content=m.file_data,media_type=m.file_type or "application/octet-stream",headers={"Content-Disposition":f'inline; filename="{m.file_name or "file"}"'})
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -421,6 +692,8 @@ async def websocket_endpoint(ws: WebSocket):
                 file_b64 = data.get("file_data")
                 file_name = data.get("file_name")
                 file_type = data.get("file_type")
+                reply_to_id = int(data.get("reply_to_id") or 0) or None
+                secret = bool(data.get("secret", False))
                 if not receiver_id or (not text and not file_b64):
                     continue
 
@@ -445,6 +718,8 @@ async def websocket_endpoint(ws: WebSocket):
                         file_data=file_data,
                         file_name=(file_name or "")[:255] if file_name else None,
                         file_type=(file_type or "application/octet-stream")[:100] if file_data else None,
+                        reply_to_id=reply_to_id,
+                        secret=secret,
                     )
                     db.add(m)
                     await db.commit()
@@ -452,6 +727,42 @@ async def websocket_endpoint(ws: WebSocket):
                     payload = {"type": "message", "message": msg_public(m)}
                 await send_ws(uid, payload)
                 await send_ws(receiver_id, payload)
+
+
+            elif typ == "channel_send":
+                channel_id=int(data.get("channel_id") or 0); text=str(data.get("text","")).strip()
+                if not channel_id or not text: continue
+                async with SessionLocal() as db:
+                    member=await db.scalar(select(ChannelMember).where(ChannelMember.channel_id==channel_id,ChannelMember.user_id==uid))
+                    channel=await db.get(Channel,channel_id)
+                    if not member or not channel: continue
+                    if channel.owner_id != uid: continue
+                    cp=ChannelPost(channel_id=channel_id,sender_id=uid,text=text[:4000])
+                    db.add(cp); await db.commit(); await db.refresh(cp)
+                    mr=await db.execute(select(ChannelMember).where(ChannelMember.channel_id==channel_id))
+                    member_ids=[x.user_id for x in mr.scalars().all()]
+                    payload={"type":"channel_message","message":{"id":cp.id,"channel_id":channel_id,"sender_id":uid,"text":cp.text,"created_at":cp.created_at.isoformat(),"pinned":False}}
+                for member_id in member_ids: await send_ws(member_id,payload)
+
+            elif typ == "group_send":
+                group_id=int(data.get("group_id") or 0); text=str(data.get("text","")).strip()
+                reply_to_id=int(data.get("reply_to_id") or 0) or None
+                if not group_id or not text: continue
+                async with SessionLocal() as db:
+                    member=await db.scalar(select(GroupMember).where(GroupMember.group_id==group_id,GroupMember.user_id==uid))
+                    if not member: continue
+                    gm=GroupMessage(group_id=group_id,sender_id=uid,text=text[:4000],reply_to_id=reply_to_id)
+                    db.add(gm); await db.commit(); await db.refresh(gm)
+                    mr=await db.execute(select(GroupMember).where(GroupMember.group_id==group_id))
+                    member_ids=[x.user_id for x in mr.scalars().all()]
+                    payload={"type":"group_message","message":{"id":gm.id,"group_id":group_id,"sender_id":uid,"text":gm.text,"created_at":gm.created_at.isoformat(),"reply_to_id":gm.reply_to_id,"pinned":False}}
+                for member_id in member_ids: await send_ws(member_id,payload)
+
+            elif typ == "call_offer" or typ == "call_answer" or typ == "call_ice":
+                peer_id=int(data.get("peer_id") or 0)
+                if peer_id:
+                    data["from_id"]=uid
+                    await send_ws(peer_id, data)
 
             elif typ == "read":
                 message_id = int(data.get("message_id", 0))
@@ -569,7 +880,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 <div id="app" class="hidden">
  <aside class="sidebar" id="sidebar">
   <div class="top">
-   <div class="toprow"><span class="brand">✈️ RayfGram</span><span><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
+   <div class="toprow"><span class="brand">✈️ RayfGram <small style="color:#2aabee">2.0</small></span><span><button class="icon" onclick="openCommunities()">👥</button><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
    <input id="search" class="search" placeholder="🔍 Найти пользователя или чат" oninput="loadUsers()">
  </div>
  <div id="userlist" class="userlist"></div>
@@ -578,14 +889,14 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
   <div class="chathead">
    <button class="icon back" onclick="closeChat()">‹</button>
    <div id="chatAvatar" class="avatar">?</div>
-   <div><div id="chatName" class="chatname">Выберите чат</div><div id="chatStatus" class="status"></div></div>
+   <div style="min-width:0;flex:1" onclick="selected&&openPublicProfile(selected.username)"><div id="chatName" class="chatname">Выберите чат</div><div id="chatStatus" class="status"></div></div><button class="icon" onclick="startCall()">📞</button><button class="icon" onclick="toggleSecret()">🔒</button>
   </div>
   <div id="messages" class="messages"><div style="text-align:center;color:#718694;margin-top:30vh">Выберите пользователя 👈</div></div>
   <div class="composer">
    <input id="fileInput" type="file" hidden onchange="pickedFile()">
    <button class="icon attach" onclick="fileInput.click()">📎</button>
    <textarea id="text" rows="1" placeholder="Сообщение..." onkeydown="keySend(event)"></textarea>
-   <button class="send" onclick="sendMessage()">➤</button>
+   <button class="icon" onclick="startVoice()">🎤</button><button class="send" onclick="sendMessage()">➤</button>
   </div>
  </main>
 </div>
@@ -613,7 +924,7 @@ function showRegister(){$('loginBox').classList.add('hidden');$('regBox').classL
 function showLogin(){$('regBox').classList.add('hidden');$('loginBox').classList.remove('hidden')}
 
 async function login(){
- try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
+ try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
@@ -629,6 +940,8 @@ function connect(){
  ws.onmessage=e=>handleWS(JSON.parse(e.data));
 }
 function handleWS(d){
+ if(d.type==='call_offer'||d.type==='call_answer'||d.type==='call_ice'){handleCall(d);return}
+ if(d.type==='group_message'||d.type==='channel_message'){if(communityType&&((d.type==='group_message'&&communityType==='group'&&d.message.group_id===communityId)||(d.type==='channel_message'&&communityType==='channel'&&d.message.channel_id===communityId))){renderCommunityMessage(d.message);scrollBottom()}return}
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
  if(d.type==='read'){updateMessageRead(d.message_id)}
  if(d.type==='message_update'){if(selected && (d.message.sender_id===selected.id||d.message.receiver_id===selected.id))renderMessage(d.message,false);loadUsers()}
@@ -638,7 +951,7 @@ function handleWS(d){
 function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected?.id!==m.sender_id && 'Notification' in window && Notification.permission==='granted'){new Notification('RayfGram',{body:m.text||'📎 Файл'})}}
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?'☑️':''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
  try{
@@ -652,7 +965,7 @@ async function selectUser(id){
  $('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');updateHeader();await loadMessages();
  renderUsers();
 }
-function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null}
+function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
 function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').textContent=selected.display_name;$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
@@ -661,7 +974,7 @@ function renderMessage(m,append){
  else if($(`m${m.id}`))return;
  let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='m'+m.id;
  let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
- let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
+ let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
  row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
  $('messages').appendChild(row);if(append)scrollBottom()
@@ -671,18 +984,46 @@ function scrollBottom(){let x=$('messages');x.scrollTop=x.scrollHeight}
 function keySend(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function pickedFile(){pendingFile=$('fileInput').files[0]||null;if(pendingFile)showToast('Прикреплено: '+pendingFile.name)}
 async function sendMessage(){
+ if(communityType&&ws&&ws.readyState===1){
+  let text=$('text').value.trim();if(!text)return;
+  ws.send(JSON.stringify({type:communityType==='group'?'group_send':'channel_send',group_id:communityType==='group'?communityId:undefined,channel_id:communityType==='channel'?communityId:undefined,text,reply_to_id:replyToId}));
+  $('text').value='';replyToId=null;return;
+ }
  if(!selected||!ws||ws.readyState!==1)return;
  let text=$('text').value.trim();if(!text&&!pendingFile)return;
  if(editingId){ws.send(JSON.stringify({type:'edit',message_id:editingId,text}));editingId=null;$('text').value='';return}
- let data={type:'send',receiver_id:selected.id,text};
+ let data={type:'send',receiver_id:selected.id,text:secretMode?xorSecret(text):text,reply_to_id:replyToId,secret:secretMode};
  if(pendingFile){if(pendingFile.size>8*1024*1024){showToast('Файл максимум 8 МБ');return}let b64=await fileToBase64(pendingFile);data.file_data=b64;data.file_name=pendingFile.name;data.file_type=pendingFile.type||'application/octet-stream'}
- ws.send(JSON.stringify(data));$('text').value='';$('fileInput').value='';pendingFile=null;
+ ws.send(JSON.stringify(data));$('text').value='';$('fileInput').value='';pendingFile=null;replyToId=null;
 }
 function fileToBase64(f){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(f)})}
-function openContext(e,id,canEdit){e.preventDefault();let c=$('ctx');c.style.left=Math.min(e.clientX,innerWidth-165)+'px';c.style.top=Math.min(e.clientY,innerHeight-110)+'px';c.innerHTML='';if(canEdit){let b=document.createElement('button');b.textContent='✏️ Редактировать';b.onclick=()=>editMessage(id);c.appendChild(b)}if(canEdit){let b=document.createElement('button');b.textContent='🗑️ Удалить';b.onclick=()=>deleteMessage(id);c.appendChild(b)}c.classList.remove('hidden')}
+function openContext(e,id,canEdit){e.preventDefault();let c=$('ctx');c.style.left=Math.min(e.clientX,innerWidth-190)+'px';c.style.top=Math.min(e.clientY,innerHeight-220)+'px';c.innerHTML='';let b=document.createElement('button');b.textContent='↩️ Ответить';b.onclick=()=>replyMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='😂 Реакция';b.onclick=()=>reactMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='📌 Закрепить';b.onclick=()=>pinMessage(id);c.appendChild(b);if(canEdit){b=document.createElement('button');b.textContent='✏️ Редактировать';b.onclick=()=>editMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='🗑️ Удалить';b.onclick=()=>deleteMessage(id);c.appendChild(b)}c.classList.remove('hidden')}
 document.addEventListener('click',e=>{if(!$('ctx').contains(e.target))$('ctx').classList.add('hidden')});
 function editMessage(id){$('ctx').classList.add('hidden');let row=$(`m${id}`);let t=row?.querySelector('.msgtext')?.textContent||'';$('text').value=t;editingId=id;$('text').focus();showToast('Редактирование — отправь изменённый текст')}
 function deleteMessage(id){$('ctx').classList.add('hidden');if(confirm('Удалить сообщение?'))ws.send(JSON.stringify({type:'delete',message_id:id}))}
+
+let replyToId=null, secretMode=false, mediaRecorder=null, audioChunks=[];
+function replyMessage(id){$('ctx').classList.add('hidden');replyToId=id;showToast('↩️ Ответ на сообщение #'+id);$('text').focus()}
+async function reactMessage(id){$('ctx').classList.add('hidden');let e=prompt('Реакция','❤️');if(!e)return;let fd=new FormData();fd.append('emoji',e);try{await api('/api/react/'+id,{method:'POST',body:fd});showToast('Реакция добавлена '+e)}catch(err){showToast(err.message)}}
+async function pinMessage(id){$('ctx').classList.add('hidden');try{await api('/api/pin/'+id,{method:'POST'});loadMessages();showToast('📌 Закрепление изменено')}catch(e){showToast(e.message)}}
+function toggleSecret(){secretMode=!secretMode;showToast(secretMode?'🔒 Секретный режим включён':'🔓 Секретный режим выключен')}
+function xorSecret(text){let key=localStorage.getItem('rayf_secret_key');if(!key){key=prompt('Придумай общий секретный ключ для этого чата');if(!key)return text;localStorage.setItem('rayf_secret_key',key)}let out='';for(let i=0;i<text.length;i++)out+=String.fromCharCode(text.charCodeAt(i)^key.charCodeAt(i%key.length));return btoa(unescape(encodeURIComponent(out)))}
+async function startVoice(){if(!selected)return;try{let stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=async()=>{let blob=new Blob(audioChunks,{type:'audio/webm'});pendingFile=new File([blob],'voice-message.webm',{type:'audio/webm'});await sendMessage();stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();showToast('🎤 Запись до 15 секунд…');setTimeout(()=>{if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop()},15000)}catch(e){showToast('Разреши микрофон для голосового сообщения')}}
+async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){showToast('Звонки не поддерживаются');return}try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:selected.id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};let offer=await pc.createOffer();await pc.setLocalDescription(offer);ws.send(JSON.stringify({type:'call_offer',peer_id:selected.id,sdp:offer}));showToast('📞 Звоним…')}catch(e){showToast('Разреши микрофон')}}
+async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:d.from_id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);ws.send(JSON.stringify({type:'call_answer',peer_id:d.from_id,sdp:ans}))}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
+function openPublicProfile(username){api('/api/profile/'+encodeURIComponent(username)).then(u=>openDrawer(`<h2>👤 Профиль</h2><div class="profile-big">${avatarHtml(u,'avatar')}</div><h2>${esc(u.display_name)} ${u.verified?'☑️':''}</h2><p>@${esc(u.username)}</p><p style="color:#a8bac7">${esc(u.bio||'Нет информации')}</p><p>${u.online?'🟢 онлайн':'⚪ офлайн'}</p>`)).catch(e=>showToast(e.message))}
+function openCommunities(){openDrawer(`<h2>👥 Сообщества</h2><button class="save" onclick="createGroup()">➕ Создать группу</button><button class="save" onclick="createChannel()">📢 Создать канал</button><button class="save" onclick="joinCommunity()">🔗 Войти по invite-коду</button><div id="communityList" style="margin-top:15px"></div>`);loadCommunities()}
+async function loadCommunities(){try{let gs=await api('/api/groups'),cs=await api('/api/channels');$('communityList').innerHTML='<h3>Группы</h3>'+gs.map(g=>`<div class="user" onclick="selectGroup(${g.id})"><div class="uinfo"><div>👥 ${esc(g.name)}</div><div class="preview">Invite: ${esc(g.invite_code)}</div></div></div>`).join('')+'<h3>Каналы</h3>'+cs.map(c=>`<div class="user" onclick="selectChannel(${c.id})"><div class="uinfo"><div>📢 ${esc(c.name)} @${esc(c.username)}</div><div class="preview">Invite: ${esc(c.invite_code)}</div></div></div>`).join('')||'<p>Пока пусто</p>'}catch(e){}}
+async function createGroup(){let n=prompt('Название группы');if(!n)return;let fd=new FormData();fd.append('name',n);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана');loadCommunities()}catch(e){showToast(e.message)}}
+async function createChannel(){let n=prompt('Название канала');if(!n)return;let u=prompt('Username канала без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/channels',{method:'POST',body:fd});showToast('📢 Канал создан');loadCommunities()}catch(e){showToast(e.message)}}
+async function joinCommunity(){let c=prompt('Invite-код');if(!c)return;try{await api('/api/groups/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы вошли в группу');loadCommunities();return}catch(e){}try{await api('/api/channels/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы подписались на канал');loadCommunities()}catch(e){showToast('Неверный invite-код')}}
+
+
+let communityType=null, communityId=null;
+async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 Группа';$('chatStatus').textContent='';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 Канал';$('chatStatus').textContent='';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
+
 function openDrawer(html){$('panelContent').innerHTML=html;$('drawer').classList.remove('hidden')}
 function closeDrawer(){$('drawer').classList.add('hidden')}
 function openProfile(){
@@ -695,11 +1036,12 @@ async function saveProfile(){try{let fd=new FormData();fd.append('display_name',
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button>
+ <p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram 1.0 · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
 }
+async function setup2FA(){try{let d=await api('/api/2fa/setup',{method:'POST'});let code=prompt('Секрет 2FA: '+d.secret+'\nДобавь его в Authenticator и введи текущий 6-значный код');if(!code)return;let fd=new FormData();fd.append('code',code);await api('/api/2fa/enable',{method:'POST',body:fd});showToast('🔐 2FA включена')}catch(e){showToast(e.message)}}
 async function enableNotifications(){if(!('Notification'in window)){showToast('Браузер не поддерживает уведомления');return}let p=await Notification.requestPermission();showToast(p==='granted'?'Уведомления включены':'Уведомления отключены')}
 function logout(){localStorage.removeItem('rayf_token');location.reload()}
 async function searchMessages(){
