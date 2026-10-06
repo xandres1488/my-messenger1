@@ -623,11 +623,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
         while True:
 
-    message = await websocket.receive_text()
+        message = await websocket.receive_text()
 
-    if message.startswith("TO:"):
+          if message.startswith("TO:"):
 
-        parts = message.split(":", 2)
+           parts = message.split(":", 2)
 
         receiver_id = int(parts[1])
         message_text = parts[2]
@@ -641,7 +641,6 @@ async def websocket_endpoint(websocket: WebSocket):
             )
 
             db.add(new_message)
-
             await db.commit()
 
         text = f"{username}: {message_text}"
@@ -660,7 +659,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     connections.pop(connection, None)
 
         continue
-
+        
     except WebSocketDisconnect:
 
         connections.pop(websocket, None)
