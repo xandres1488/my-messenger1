@@ -214,22 +214,54 @@ async function loadUsers(){
 }
 
 function connectSocket(){
+  // Не создаём несколько WebSocket одновременно.
+  if(socket && (
+    socket.readyState===WebSocket.OPEN ||
+    socket.readyState===WebSocket.CONNECTING
+  )){
+    return;
+  }
+
   const protocol=location.protocol==="https:"?"wss":"ws";
-  socket=new WebSocket(protocol+"://"+location.host+"/ws");
-  socket.onopen=()=>socket.send("AUTH:"+token);
-  socket.onmessage=e=>{
+  const currentSocket=new WebSocket(protocol+"://"+location.host+"/ws");
+  socket=currentSocket;
+
+  currentSocket.onopen=()=>{
+    // Если за это время появился другой сокет — старый ничего не делает.
+    if(socket===currentSocket){
+      currentSocket.send("AUTH:"+token);
+    }
+  };
+
+  currentSocket.onmessage=e=>{
+    // Обрабатываем сообщения только от актуального соединения.
+    if(socket!==currentSocket)return;
+
     try{
       const data=JSON.parse(e.data);
       if(data.type==="message"){
-        if(selectedUser && (data.sender_id===selectedUser.id || data.receiver_id===selectedUser.id)){
+        if(selectedUser && (
+          data.sender_id===selectedUser.id ||
+          data.receiver_id===selectedUser.id
+        )){
           addMessage(data);
         }
       }
     }catch(err){}
   };
-  socket.onclose=()=>setTimeout(()=>{
-    if(token) connectSocket();
-  },1500);
+
+  currentSocket.onclose=()=>{
+    // Старый сокет не должен запускать ещё одно подключение.
+    if(socket!==currentSocket)return;
+
+    socket=null;
+
+    if(token){
+      setTimeout(()=>{
+        if(token && !socket) connectSocket();
+      },1500);
+    }
+  };
 }
 
 async function openChat(user){
@@ -429,6 +461,16 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception:
             await websocket.close()
             return
+
+        # У одного пользователя должно быть только одно WebSocket-соединение.
+        # Это защищает от отправки одного сообщения 2-3 раза.
+        for old_connection, old_info in list(connections.items()):
+            if old_info["id"] == user_id and old_connection is not websocket:
+                connections.pop(old_connection, None)
+                try:
+                    await old_connection.close()
+                except Exception:
+                    pass
 
         connections[websocket] = {
             "id": user_id,
