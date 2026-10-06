@@ -624,7 +624,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
 
             message = await websocket.receive_text()
-if message.startswith("TO:"):
+
+              if message.startswith("TO:"):
     parts = message.split(":", 2)
 
     receiver_id = int(parts[1])
