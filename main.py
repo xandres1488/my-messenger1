@@ -220,6 +220,51 @@ async def users(request: Request):
         return [user_public(u, u.id in connections) for u in items]
 
 
+@app.get("/api/chats")
+async def chats(request: Request):
+    """Return only users with whom the current account has message history.
+    A new account therefore starts with an empty chat list.
+    """
+    user = await current_user(request)
+    async with SessionLocal() as db:
+        result = await db.execute(
+            select(Message)
+            .where(or_(Message.sender_id == user.id, Message.receiver_id == user.id))
+            .order_by(Message.created_at.desc())
+            .limit(1000)
+        )
+        rows = result.scalars().all()
+
+        # Keep the latest message per conversation.
+        latest = {}
+        for m in rows:
+            other_id = m.receiver_id if m.sender_id == user.id else m.sender_id
+            if other_id not in latest:
+                latest[other_id] = m
+
+        if not latest:
+            return []
+
+        users_result = await db.execute(
+            select(User).where(User.id.in_(list(latest.keys())))
+        )
+        by_id = {u.id: u for u in users_result.scalars().all()}
+
+        items = []
+        for other_id, m in latest.items():
+            u = by_id.get(other_id)
+            if not u:
+                continue
+            item = user_public(u, u.id in connections)
+            item["last_message"] = "" if m.deleted else (m.text or ("📎 " + (m.file_name or "Файл")))
+            item["last_message_at"] = m.created_at.isoformat()
+            item["unread"] = 0
+            items.append(item)
+
+        items.sort(key=lambda x: x["last_message_at"], reverse=True)
+        return items
+
+
 @app.get("/api/messages/{other_id}")
 async def messages(other_id: int, request: Request):
     user = await current_user(request)
@@ -490,8 +535,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .chat{flex:1;display:flex;flex-direction:column;min-width:0;background:#0e1621}
 .chathead{height:64px;background:#17212b;border-bottom:1px solid #253442;display:flex;align-items:center;padding:8px 14px;gap:10px}
 .chathead .back{display:none}.chatname{font-weight:800}.status{font-size:12px;color:#8da1af;margin-top:3px}
-.messages{flex:1;overflow:auto;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
-.msgrow{display:flex;margin:5px 0}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
+.messages{flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
+.msgrow{display:flex;margin:5px 0;flex:none}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
 .msgtext{white-space:pre-wrap;word-break:break-word}.meta{font-size:11px;color:#a7bac7;text-align:right;margin-top:3px}.deleted{font-style:italic;color:#91a3b0}
 .file{display:block;margin:4px 0;color:#fff;text-decoration:none;background:#ffffff14;border-radius:8px;padding:9px}.file:hover{background:#ffffff22}
 .composer{display:flex;gap:7px;padding:9px 12px;background:#17212b;border-top:1px solid #253442;align-items:flex-end}.attach{font-size:22px}.composer textarea{flex:1;resize:none;max-height:120px;border:0;background:#0e1621;color:#fff;border-radius:12px;padding:11px;outline:0}.send{background:#2aabee;color:#fff;border-radius:12px;padding:11px 16px;font-weight:700}
@@ -525,7 +570,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  <aside class="sidebar" id="sidebar">
   <div class="top">
    <div class="toprow"><span class="brand">✈️ RayfGram</span><span><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
-   <input id="search" class="search" placeholder="🔍 Поиск" oninput="loadUsers()">
+   <input id="search" class="search" placeholder="🔍 Найти пользователя или чат" oninput="loadUsers()">
  </div>
  <div id="userlist" class="userlist"></div>
  </aside>
@@ -593,9 +638,15 @@ function handleWS(d){
 function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected?.id!==m.sender_id && 'Notification' in window && Notification.permission==='granted'){new Notification('RayfGram',{body:m.text||'📎 Файл'})}}
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`).join('')||'<div style="padding:25px;color:#8193a0">Ничего не найдено</div>';
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
-async function loadUsers(){try{users=await api('/api/users?q='+encodeURIComponent($('search').value));renderUsers()}catch(e){}}
+async function loadUsers(){
+ try{
+   const q=$('search').value.trim();
+   users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
+   renderUsers();
+ }catch(e){}
+}
 async function selectUser(id){
  selected=users.find(u=>u.id===id);if(!selected)return;
  $('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');updateHeader();await loadMessages();
