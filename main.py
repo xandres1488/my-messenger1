@@ -204,7 +204,10 @@ button.secondary {
 
 </div>
 
-
+<div id="users">
+    <h2>Пользователи</h2>
+    <div id="userList"></div>
+</div>
 <div id="chat">
 
 <div id="messages"></div>
