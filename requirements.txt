@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg
 pwdlib[argon2]
 PyJWT
