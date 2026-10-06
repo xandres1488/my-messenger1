@@ -623,34 +623,43 @@ async def websocket_endpoint(websocket: WebSocket):
 
         while True:
 
-            message = await websocket.receive_text()
+    message = await websocket.receive_text()
 
-              if message.startswith("TO:"):
-    parts = message.split(":", 2)
+    if message.startswith("TO:"):
 
-    receiver_id = int(parts[1])
-    message_text = parts[2]
+        parts = message.split(":", 2)
 
-    async with SessionLocal() as db:
+        receiver_id = int(parts[1])
+        message_text = parts[2]
 
-        new_message = Message(
-            sender_id=payload["user_id"],
-            receiver_id=receiver_id,
-            text=message_text
-        )
+        async with SessionLocal() as db:
 
-        db.add(new_message)
-        await db.commit()
-            text = f"{username}: {message}"
+            new_message = Message(
+                sender_id=payload["user_id"],
+                receiver_id=receiver_id,
+                text=message_text
+            )
 
-            for connection in list(connections):
+            db.add(new_message)
+
+            await db.commit()
+
+        text = f"{username}: {message_text}"
+
+        for connection, info in list(connections.items()):
+
+            if info["id"] in (
+                payload["user_id"],
+                receiver_id
+            ):
 
                 try:
                     await connection.send_text(text)
 
                 except Exception:
-
                     connections.pop(connection, None)
+
+        continue
 
     except WebSocketDisconnect:
 
