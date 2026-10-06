@@ -450,7 +450,24 @@ async def register(data: dict):
         await db.commit()
 
     return {"message": "Регистрация успешна"}
+@app.get("/users")
+async def get_users():
 
+    async with SessionLocal() as db:
+
+        result = await db.execute(
+            select(User).order_by(User.username)
+        )
+
+        users = result.scalars().all()
+
+        return [
+            {
+                "id": user.id,
+                "username": user.username
+            }
+            for user in users
+        ]
 
 @app.post("/login")
 async def login(data: dict):
