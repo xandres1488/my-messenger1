@@ -601,7 +601,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close()
             return
 
-        connections[websocket] = username
+        connections[websocket] = {
+    "id": payload["user_id"],
+    "username": username
+        }
 
         await websocket.send_text(
             "🟢 Вы вошли в чат как " + username
