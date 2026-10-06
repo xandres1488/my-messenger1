@@ -54,7 +54,7 @@ HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>My Messenger</title>
+<title>RayfGram</title>
 
 <style>
 * {
@@ -170,7 +170,7 @@ button.secondary {
 <div class="app">
 
 <div class="header">
-💬 My Messenger
+💬 RayfGram
 <div class="user" id="user"></div>
 </div>
 
