@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from sqlalchemy import String, ForeignKey, DateTime, select, or_, and_
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -364,7 +364,7 @@ async def login(data: dict):
 
 
 @app.get("/users")
-async def get_users(authorization: str = ""):
+async def get_users(authorization: str | None = Header(default=None)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Нет авторизации")
 
@@ -379,7 +379,7 @@ async def get_users(authorization: str = ""):
 
 
 @app.get("/messages/{other_user_id}")
-async def get_messages(other_user_id: int, authorization: str = ""):
+async def get_messages(other_user_id: int, authorization: str | None = Header(default=None)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Нет авторизации")
 
