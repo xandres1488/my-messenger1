@@ -341,7 +341,8 @@ function startChat() {
 
     auth.style.display = "none";
     chat.style.display = "block";
-
+document.getElementById("users").style.display = "block";
+loadUsers();
     document.getElementById("user").textContent =
         "Вы вошли как: " + username;
 
