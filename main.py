@@ -1075,16 +1075,29 @@ async function loadUsers(){
  }catch(e){}
 }
 async function selectUser(id){
- selected=users.find(u=>u.id===id);if(!selected)return;
- $('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');updateHeader();await loadMessages();
+ // Always resolve the exact user that was clicked before opening the chat.
+ // This prevents the main-menu row from opening the wrong conversation.
+ let clicked=users.find(u=>Number(u.id)===Number(id));
+ if(!clicked){
+   try{ clicked=await api('/api/users?q='+encodeURIComponent(String(id))); clicked=clicked.find(u=>Number(u.id)===Number(id)); }catch(e){}
+ }
+ if(!clicked){showToast('Пользователь не найден');return}
+ selected=clicked;
+ communityType=null;communityId=null;
+ $('messages').innerHTML='';
+ $('sidebar').classList.add('chat-open');
+ $('chat').classList.add('chat-open');
+ updateHeader();
  renderUsers();
+ await loadMessages();
 }
 function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
 function updateHeader(){
  if(!selected)return;
  $('chatAvatar').outerHTML=avatarHtml(selected,'avatar');
  $('chatAvatar').id='chatAvatar';
- $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username||selected.display_name)}"><span class="chat-display-name">${esc(selected.username||selected.display_name)}</span> ${selected.verified?verifiedBadge():''}</button>`;
+ const chatLabel=selected.username||selected.display_name||'Чат';
+ $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(chatLabel)}"><span class="chat-display-name">${esc(chatLabel)}</span> ${selected.verified?verifiedBadge():''}</button>`;
  $('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно';
 }
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
