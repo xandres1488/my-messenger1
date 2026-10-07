@@ -57,6 +57,7 @@ class User(Base):
     totp_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     stars: Mapped[int] = mapped_column(Integer, default=0)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
 
 class Chat(Base):
@@ -186,6 +187,8 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars INTEGER DEFAULT 0")
+        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE")
+        await conn.exec_driver_sql("UPDATE users SET is_banned = FALSE WHERE is_banned IS NULL")
         await conn.exec_driver_sql("UPDATE users SET stars = 0 WHERE stars IS NULL")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE")
@@ -246,21 +249,25 @@ async def current_user(request: Request) -> User:
         user = await db.get(User, uid)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if user.is_banned:
+            raise HTTPException(status_code=403, detail="Этот аккаунт заблокирован")
         return user
 
 
 def user_public(user: User, online: bool = False) -> dict:
+    banned = bool(user.is_banned)
     return {
         "id": user.id,
         "username": user.username,
-        "display_name": user.display_name or user.username,
-        "bio": user.bio or "",
-        "online": online,
-        "last_seen": user.last_seen.isoformat() if user.last_seen else None,
-        "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
-        "verified": user.username.lower() in {"rayf", "monk", "rayfgrambot"},
-        "twofa": bool(user.totp_enabled),
-        "stars": int(user.stars or 0),
+        "display_name": "УДАЛЕННЫЙ АКАУНТ" if banned else (user.display_name or user.username),
+        "bio": "" if banned else (user.bio or ""),
+        "online": False if banned else online,
+        "last_seen": None if banned else (user.last_seen.isoformat() if user.last_seen else None),
+        "avatar": None if banned else (f"/api/avatar/{user.id}" if user.avatar else None),
+        "verified": False if banned else user.username.lower() in {"rayf", "monk", "rayfgrambot"},
+        "twofa": False if banned else bool(user.totp_enabled),
+        "stars": 0 if banned else int(user.stars or 0),
+        "banned": banned,
     }
 
 
@@ -309,6 +316,17 @@ async def ensure_chat(db, a_id: int, b_id: int):
 
 async def is_blocked(db, sender_id: int, receiver_id: int) -> bool:
     return bool(await db.scalar(select(Block).where(Block.blocker_id == receiver_id, Block.blocked_id == sender_id)))
+
+
+async def set_banned(target_id: int, banned: bool):
+    """Admin-only account state change. Original profile data is preserved and only masked while banned."""
+    async with SessionLocal() as db:
+        target = await db.get(User, target_id)
+        if not target:
+            return False
+        target.is_banned = bool(banned)
+        await db.commit()
+        return True
 
 
 @app.get("/api/rayfstar")
@@ -386,6 +404,8 @@ async def login(username: str = Form(...), password: str = Form(...), code: str 
         user = await db.scalar(select(User).where(User.username == username))
         if not user or not password_hash.verify(password, user.password_hash):
             raise HTTPException(401, "Неверный username или пароль")
+        if user.is_banned:
+            raise HTTPException(403, "Этот аккаунт заблокирован")
         if user.totp_enabled:
             if not verify_totp(user.totp_secret or "", code.strip()):
                 return JSONResponse({"twofa_required": True, "message": "Введите код 2FA из приложения-аутентификатора"}, status_code=200)
@@ -794,7 +814,7 @@ async def avatar(request: Request, file: UploadFile = File(...)):
 async def get_avatar(user_id: int):
     async with SessionLocal() as db:
         user = await db.get(User, user_id)
-        if not user or not user.avatar:
+        if not user or user.is_banned or not user.avatar:
             raise HTTPException(404)
         return Response(content=user.avatar, media_type=user.avatar_type or "image/jpeg")
 
@@ -865,9 +885,13 @@ async def websocket_endpoint(ws: WebSocket):
 
     async with SessionLocal() as db:
         user = await db.get(User, uid)
-        if user:
-            user.last_seen = datetime.now(timezone.utc)
-            await db.commit()
+        if not user or user.is_banned:
+            await ws.send_text(json.dumps({"type": "banned", "message": "Этот аккаунт заблокирован"}))
+            await ws.close(code=4003)
+            connections.pop(uid, None)
+            return
+        user.last_seen = datetime.now(timezone.utc)
+        await db.commit()
 
     await send_ws(uid, {"type": "connected", "user_id": uid})
     await broadcast_presence(uid, True)
@@ -903,6 +927,39 @@ async def websocket_endpoint(ws: WebSocket):
             if typ == "send":
                 receiver_id = int(data.get("receiver_id", 0))
                 text = str(data.get("text", "")).strip()
+                # /бан and /разбан are private admin commands for @rayf only.
+                if text.lower() in {"/бан", "/разбан"}:
+                    async with SessionLocal() as db:
+                        actor = await db.get(User, uid)
+                        target = await db.get(User, receiver_id) if receiver_id else None
+                        if not actor or actor.is_banned:
+                            await send_ws(uid, {"type": "error", "message": "Этот аккаунт заблокирован"})
+                            continue
+                        if actor.username.lower() != "rayf":
+                            await send_ws(uid, {"type": "error", "message": "Эта команда доступна только @rayf"})
+                            continue
+                        if not target:
+                            await send_ws(uid, {"type": "error", "message": "Пользователь не найден"})
+                            continue
+                        if target.id == actor.id:
+                            await send_ws(uid, {"type": "error", "message": "Нельзя изменить статус @rayf"})
+                            continue
+                        should_ban = text.lower() == "/бан"
+                        target.is_banned = should_ban
+                        await db.commit()
+                        if should_ban:
+                            await send_ws(target.id, {"type": "banned", "message": "Этот аккаунт заблокирован"})
+                            target_ws = connections.get(target.id)
+                            if target_ws:
+                                try:
+                                    await target_ws.close(code=4003)
+                                except Exception:
+                                    pass
+                                connections.pop(target.id, None)
+                            await send_ws(uid, {"type": "admin_action", "message": "Аккаунт заблокирован"})
+                        else:
+                            await send_ws(uid, {"type": "admin_action", "message": "Аккаунт разблокирован"})
+                    continue
                 file_b64 = data.get("file_data")
                 file_name = data.get("file_name")
                 file_type = data.get("file_type")
@@ -1625,13 +1682,13 @@ function showRegister(){$('loginBox').classList.add('hidden');$('regBox').classL
 function showLogin(){$('regBox').classList.add('hidden');$('loginBox').classList.remove('hidden')}
 
 async function login(){
- try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
+ try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok){let j=await r.json().catch(()=>null);throw Error(j?.detail||'Ошибка входа')}let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
+ try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -1643,6 +1700,15 @@ function connect(){
 function handleWS(d){
  if(d.type==='call_offer'||d.type==='call_answer'||d.type==='call_ice'){handleCall(d);return}
  if(d.type==='group_message'||d.type==='channel_message'){if(communityType&&((d.type==='group_message'&&communityType==='group'&&d.message.group_id===communityId)||(d.type==='channel_message'&&communityType==='channel'&&d.message.channel_id===communityId))){renderCommunityMessage(d.message);scrollBottom()}return}
+ if(d.type==='banned'){
+   if(ws){try{ws.close(4003)}catch(e){}}
+   localStorage.removeItem('rayf_token');
+   token=''; me=null; selected=null; users=[];
+   showLogin();
+   showToast(d.message||'Этот аккаунт заблокирован');
+   return;
+ }
+ if(d.type==='admin_action'){showToast(d.message||'Готово');loadUsers();return}
  if(d.type==='error'){showToast(d.message||'Ошибка');return}
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
  if(d.type==='read'){updateMessageRead(d.message_id)}
@@ -1684,7 +1750,7 @@ function renderUsers(){
    if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))}</div></div></div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
  }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
@@ -1722,7 +1788,7 @@ function updateHeader(){
  if(!selected)return;
  const wrap=$('chatAvatarWrap');
  if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
- $('chatName').innerHTML=esc(selected.display_name||selected.username)+' '+(selected.verified?verifiedBadge():'');
+ $('chatName').innerHTML=esc(selected.banned?'УДАЛЕННЫЙ АКАУНТ':(selected.display_name||selected.username))+' '+(selected.banned?'':(selected.verified?verifiedBadge():''));
  const status=$('chatStatus');
  const typing=typingUserId===selected.id;
  status.textContent = typing ? 'печатает..' : selected.online ? 'в сети' : 'был(а) недавно';
