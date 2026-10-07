@@ -395,6 +395,32 @@ async def register(username: str = Form(...), password: str = Form(...), display
         db.add(user)
         await db.commit()
         await db.refresh(user)
+
+        # ===== @rayfgrambot: уведомление @rayf о новом пользователе =====
+        # Регистрация не должна ломаться, если служебные аккаунты ещё не созданы.
+        bot = await db.scalar(select(User).where(User.username == "rayfgrambot"))
+        admin = await db.scalar(select(User).where(User.username == "rayf"))
+        if bot and admin and bot.id != admin.id and user.id not in {bot.id, admin.id}:
+            await ensure_chat(db, bot.id, admin.id)
+            bot_message = Message(
+                sender_id=bot.id,
+                receiver_id=admin.id,
+                text=(
+                    "У нас новый пользователь!\n"
+                    f"Ник:{user.display_name or user.username}\n"
+                    f"Юз:@{user.username}"
+                ),
+            )
+            db.add(bot_message)
+            await db.commit()
+            await db.refresh(bot_message)
+            bot_payload = {"type": "message", "message": msg_public(bot_message)}
+        else:
+            bot_payload = None
+
+        if bot_payload:
+            await send_ws(admin.id, bot_payload)
+
         return {"token": make_token(user.id), "user": user_public(user)}
 
 
