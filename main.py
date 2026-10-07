@@ -13,7 +13,7 @@ from pwdlib import PasswordHash
 import jwt
 
 # ============================================================
-# RayfGram v12 — stable login + private messages + correct avatars
+# RayfGram 1.0 — stable login + private messages + correct avatars
 # IMPORTANT: this version intentionally uses HTTP for messages.
 # HTTP persistence is the source of truth; polling keeps chats fresh.
 # ============================================================
@@ -44,7 +44,7 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 password_hash = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
 
-app = FastAPI(title="RayfGram Stable Messenger")
+app = FastAPI(title="RayfGram 1.0 Messenger")
 
 
 class Base(DeclarativeBase):
