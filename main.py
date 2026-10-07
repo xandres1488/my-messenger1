@@ -57,23 +57,6 @@ class User(Base):
     totp_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     stars: Mapped[int] = mapped_column(Integer, default=0)
-    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-
-
-class Chat(Base):
-    __tablename__ = "chats"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user1_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    user2_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-
-class Block(Base):
-    __tablename__ = "blocks"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    blocker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    blocked_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class Message(Base):
@@ -98,7 +81,6 @@ class Group(Base):
     __tablename__ = "groups"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
-    username: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     description: Mapped[str] = mapped_column(String(500), default="")
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     invite_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -187,37 +169,12 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars INTEGER DEFAULT 0")
-        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE")
-        await conn.exec_driver_sql("UPDATE users SET is_banned = FALSE WHERE is_banned IS NULL")
         await conn.exec_driver_sql("UPDATE users SET stars = 0 WHERE stars IS NULL")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
-        await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
-        await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
-        await conn.exec_driver_sql("""
-            CREATE TABLE IF NOT EXISTS chats (
-                id SERIAL PRIMARY KEY,
-                user1_id INTEGER NOT NULL REFERENCES users(id),
-                user2_id INTEGER NOT NULL REFERENCES users(id),
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        await conn.exec_driver_sql("""
-            CREATE TABLE IF NOT EXISTS blocks (
-                id SERIAL PRIMARY KEY,
-                blocker_id INTEGER NOT NULL REFERENCES users(id),
-                blocked_id INTEGER NOT NULL REFERENCES users(id),
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user1_id ON chats(user1_id)")
-        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user2_id ON chats(user2_id)")
-        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
-        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
 
 
 @app.on_event("startup")
@@ -249,26 +206,21 @@ async def current_user(request: Request) -> User:
         user = await db.get(User, uid)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        if user.is_banned:
-            raise HTTPException(status_code=403, detail="Этот аккаунт заблокирован")
         return user
 
 
 def user_public(user: User, online: bool = False) -> dict:
-    banned = bool(user.is_banned)
     return {
         "id": user.id,
         "username": user.username,
-        "display_name": "УДАЛЕННЫЙ АКАУНТ" if banned else (user.display_name or user.username),
-        "bio": "" if banned else (user.bio or ""),
-        "online": False if banned else online,
-        "last_seen": None if banned else (user.last_seen.isoformat() if user.last_seen else None),
-        "avatar": None if banned else (f"/api/avatar/{user.id}" if user.avatar else None),
-        "verified": False if banned else user.username.lower() in {"rayf", "monk", "rayfgrambot"},
-        "scam": False if banned else user.username.lower() == "trushny",
-        "twofa": False if banned else bool(user.totp_enabled),
-        "stars": 0 if banned else int(user.stars or 0),
-        "banned": banned,
+        "display_name": user.display_name or user.username,
+        "bio": user.bio or "",
+        "online": online,
+        "last_seen": user.last_seen.isoformat() if user.last_seen else None,
+        "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
+        "verified": user.username.lower() == "rayf",
+        "twofa": bool(user.totp_enabled),
+        "stars": int(user.stars or 0),
     }
 
 
@@ -303,31 +255,6 @@ async def send_ws(user_id: int, data: dict):
             await ws.send_text(json.dumps(data))
         except Exception:
             connections.pop(user_id, None)
-
-
-async def ensure_chat(db, a_id: int, b_id: int):
-    u1, u2 = sorted((int(a_id), int(b_id)))
-    chat = await db.scalar(select(Chat).where(Chat.user1_id == u1, Chat.user2_id == u2).limit(1))
-    if not chat:
-        chat = Chat(user1_id=u1, user2_id=u2)
-        db.add(chat)
-        await db.flush()
-    return chat
-
-
-async def is_blocked(db, sender_id: int, receiver_id: int) -> bool:
-    return bool(await db.scalar(select(Block).where(Block.blocker_id == receiver_id, Block.blocked_id == sender_id)))
-
-
-async def set_banned(target_id: int, banned: bool):
-    """Admin-only account state change. Original profile data is preserved and only masked while banned."""
-    async with SessionLocal() as db:
-        target = await db.get(User, target_id)
-        if not target:
-            return False
-        target.is_banned = bool(banned)
-        await db.commit()
-        return True
 
 
 @app.get("/api/rayfstar")
@@ -369,7 +296,7 @@ def verify_totp(secret: str, code: str) -> bool:
     return False
 
 def group_public(g: Group) -> dict:
-    return {"id": g.id, "name": g.name, "username": g.username or f"group_{g.id}", "description": g.description, "invite_code": g.invite_code, "owner_id": g.owner_id}
+    return {"id": g.id, "name": g.name, "description": g.description, "invite_code": g.invite_code, "owner_id": g.owner_id}
 
 def channel_public(c: Channel) -> dict:
     return {"id": c.id, "name": c.name, "username": c.username, "description": c.description, "invite_code": c.invite_code, "owner_id": c.owner_id}
@@ -405,8 +332,6 @@ async def login(username: str = Form(...), password: str = Form(...), code: str 
         user = await db.scalar(select(User).where(User.username == username))
         if not user or not password_hash.verify(password, user.password_hash):
             raise HTTPException(401, "Неверный username или пароль")
-        if user.is_banned:
-            raise HTTPException(403, "Этот аккаунт заблокирован")
         if user.totp_enabled:
             if not verify_totp(user.totp_secret or "", code.strip()):
                 return JSONResponse({"twofa_required": True, "message": "Введите код 2FA из приложения-аутентификатора"}, status_code=200)
@@ -432,183 +357,55 @@ async def users(request: Request):
         return [user_public(u, u.id in connections) for u in items]
 
 
-@app.get("/api/chat-search")
-async def chat_search(request: Request):
-    """Search users, groups and channels available to the current user."""
-    user = await current_user(request)
-    q = request.query_params.get("q", "").strip().lower().lstrip("@")
-    if not q:
-        return []
-    async with SessionLocal() as db:
-        user_result = await db.execute(
-            select(User).where(
-                User.id != user.id,
-                or_(User.username.ilike(f"%{q}%"), User.display_name.ilike(f"%{q}%"))
-            ).order_by(User.display_name).limit(50)
-        )
-        group_result = await db.execute(
-            select(Group).join(GroupMember, Group.id == GroupMember.group_id).where(
-                GroupMember.user_id == user.id,
-                or_(Group.username.ilike(f"%{q}%"), Group.name.ilike(f"%{q}%"))
-            ).order_by(Group.name).limit(50)
-        )
-        channel_result = await db.execute(
-            select(Channel).join(ChannelMember, Channel.id == ChannelMember.channel_id).where(
-                ChannelMember.user_id == user.id,
-                or_(Channel.username.ilike(f"%{q}%"), Channel.name.ilike(f"%{q}%"))
-            ).order_by(Channel.name).limit(50)
-        )
-
-        items = []
-        for u in user_result.scalars().all():
-            item = user_public(u, u.id in connections)
-            item["kind"] = "user"
-            items.append(item)
-        for g in group_result.scalars().all():
-            item = group_public(g)
-            item["kind"] = "group"
-            items.append(item)
-        for c in channel_result.scalars().all():
-            item = channel_public(c)
-            item["kind"] = "channel"
-            items.append(item)
-        return items
-
-
 @app.get("/api/chats")
 async def chats(request: Request):
-    """Return persistent chats plus legacy conversations found in messages."""
+    """Return only users with whom the current account has message history.
+    A new account therefore starts with an empty chat list.
+    """
     user = await current_user(request)
     async with SessionLocal() as db:
         result = await db.execute(
-            select(Chat).where(or_(Chat.user1_id == user.id, Chat.user2_id == user.id)).order_by(Chat.created_at.desc())
+            select(Message)
+            .where(or_(Message.sender_id == user.id, Message.receiver_id == user.id))
+            .order_by(Message.created_at.desc())
+            .limit(1000)
         )
-        chat_rows = result.scalars().all()
+        rows = result.scalars().all()
 
-        other_ids = set()
-        chat_created = {}
-        for c in chat_rows:
-            oid = c.user2_id if c.user1_id == user.id else c.user1_id
-            other_ids.add(oid)
-            chat_created[oid] = c.created_at
+        # Keep the latest message per conversation.
+        latest = {}
+        for m in rows:
+            other_id = m.receiver_id if m.sender_id == user.id else m.sender_id
+            if other_id not in latest:
+                latest[other_id] = m
 
-        msg_result = await db.execute(
-            select(Message).where(or_(Message.sender_id == user.id, Message.receiver_id == user.id)).order_by(Message.created_at.desc())
+        if not latest:
+            return []
+
+        users_result = await db.execute(
+            select(User).where(User.id.in_(list(latest.keys())))
         )
-        msg_rows = msg_result.scalars().all()
-        latest_by_user = {}
-        for m in msg_rows:
-            oid = m.receiver_id if m.sender_id == user.id else m.sender_id
-            if oid == user.id:
-                continue
-            other_ids.add(oid)
-            if oid not in latest_by_user:
-                latest_by_user[oid] = m
-
-        by_id = {}
-        if other_ids:
-            users_result = await db.execute(select(User).where(User.id.in_(list(other_ids))))
-            by_id = {u.id: u for u in users_result.scalars().all()}
+        by_id = {u.id: u for u in users_result.scalars().all()}
 
         items = []
-        for other_id in other_ids:
+        for other_id, m in latest.items():
             u = by_id.get(other_id)
             if not u:
                 continue
-            latest = latest_by_user.get(other_id)
-            created = chat_created.get(other_id) or (latest.created_at if latest else datetime.now(timezone.utc))
             item = user_public(u, u.id in connections)
-            item["last_message"] = "" if not latest else ("" if latest.deleted else (latest.text or ("📎 " + (latest.file_name or "Файл"))))
-            item["last_message_at"] = latest.created_at.isoformat() if latest else created.isoformat()
+            item["last_message"] = "" if m.deleted else (m.text or ("📎 " + (m.file_name or "Файл")))
+            item["last_message_at"] = m.created_at.isoformat()
             item["unread"] = 0
-            item["blocked"] = bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))
-            item["kind"] = "user"
-            items.append(item)
-
-        # Группы и каналы тоже являются полноценными элементами списка чатов.
-        group_result = await db.execute(
-            select(Group).join(GroupMember, Group.id == GroupMember.group_id).where(GroupMember.user_id == user.id)
-        )
-        for g in group_result.scalars().all():
-            item = group_public(g)
-            item.update({"kind": "group", "last_message": "Группа", "last_message_at": g.created_at.isoformat()})
-            items.append(item)
-
-        channel_result = await db.execute(
-            select(Channel).join(ChannelMember, Channel.id == ChannelMember.channel_id).where(ChannelMember.user_id == user.id)
-        )
-        for c in channel_result.scalars().all():
-            item = channel_public(c)
-            item.update({"kind": "channel", "last_message": "Канал", "last_message_at": c.created_at.isoformat()})
             items.append(item)
 
         items.sort(key=lambda x: x["last_message_at"], reverse=True)
         return items
 
 
-@app.post("/api/chats/{other_id}/clear")
-async def clear_chat(other_id: int, user: User = Depends(current_user)):
-    if other_id == user.id:
-        raise HTTPException(400, "Нельзя очистить чат с самим собой")
-    async with SessionLocal() as db:
-        chat = await db.scalar(select(Chat).where(or_(and_(Chat.user1_id == user.id, Chat.user2_id == other_id), and_(Chat.user1_id == other_id, Chat.user2_id == user.id))))
-        has_messages = bool(await db.scalar(select(Message.id).where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))).limit(1)))
-        if not chat and not has_messages:
-            raise HTTPException(404, "Чат не найден")
-        await db.execute(Message.__table__.delete().where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))))
-        if not chat:
-            await ensure_chat(db, user.id, other_id)
-        await db.commit()
-        return {"ok": True}
-
-
-@app.delete("/api/chats/{other_id}")
-async def delete_chat(other_id: int, user: User = Depends(current_user)):
-    if other_id == user.id:
-        raise HTTPException(400, "Нельзя удалить чат с самим собой")
-    async with SessionLocal() as db:
-        await db.execute(Message.__table__.delete().where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))))
-        await db.execute(Chat.__table__.delete().where(or_(and_(Chat.user1_id == user.id, Chat.user2_id == other_id), and_(Chat.user1_id == other_id, Chat.user2_id == user.id))))
-        await db.commit()
-        return {"ok": True}
-
-
-@app.post("/api/chats/{other_id}/block")
-async def block_user(other_id: int, user: User = Depends(current_user)):
-    if other_id == user.id:
-        raise HTTPException(400, "Нельзя заблокировать себя")
-    async with SessionLocal() as db:
-        target = await db.get(User, other_id)
-        if not target:
-            raise HTTPException(404, "Пользователь не найден")
-        exists = await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id))
-        if not exists:
-            db.add(Block(blocker_id=user.id, blocked_id=other_id))
-            await db.commit()
-        return {"ok": True, "blocked": True}
-
-
-@app.delete("/api/chats/{other_id}/block")
-async def unblock_user(other_id: int, user: User = Depends(current_user)):
-    async with SessionLocal() as db:
-        await db.execute(Block.__table__.delete().where(Block.blocker_id == user.id, Block.blocked_id == other_id))
-        await db.commit()
-        return {"ok": True, "blocked": False}
-
-
-@app.get("/api/chats/{other_id}/block")
-async def block_status(other_id: int, user: User = Depends(current_user)):
-    async with SessionLocal() as db:
-        return {"blocked": bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))}
-
-
 @app.get("/api/messages/{other_id}")
 async def messages(other_id: int, request: Request):
     user = await current_user(request)
     async with SessionLocal() as db:
-        if other_id != user.id:
-            await ensure_chat(db, user.id, other_id)
-            await db.commit()
         result = await db.execute(
             select(Message)
             .where(
@@ -673,18 +470,11 @@ async def twofa_disable(code: str = Form(...), user: User = Depends(current_user
         return {"enabled": False}
 
 @app.post("/api/groups")
-async def create_group(name: str = Form(...), username: str = Form(""), description: str = Form(""), user: User = Depends(current_user)):
+async def create_group(name: str = Form(...), description: str = Form(""), user: User = Depends(current_user)):
     name = name.strip()[:100]
-    username = username.strip().lower().lstrip("@")[:32]
     if not name: raise HTTPException(400, "Название группы обязательно")
-    if not username:
-        username = "group_" + secrets.token_hex(4)
-    if not username.replace("_", "").isalnum() or len(username) < 3:
-        raise HTTPException(400, "Некорректный username группы")
     async with SessionLocal() as db:
-        if await db.scalar(select(Group).where(Group.username == username)):
-            raise HTTPException(400, "Такой username группы уже занят")
-        g = Group(name=name, username=username, description=description.strip()[:500], owner_id=user.id, invite_code=secrets.token_urlsafe(10))
+        g = Group(name=name, description=description.strip()[:500], owner_id=user.id, invite_code=secrets.token_urlsafe(10))
         db.add(g); await db.flush()
         db.add(GroupMember(group_id=g.id, user_id=user.id, is_admin=True))
         await db.commit(); await db.refresh(g)
@@ -815,7 +605,7 @@ async def avatar(request: Request, file: UploadFile = File(...)):
 async def get_avatar(user_id: int):
     async with SessionLocal() as db:
         user = await db.get(User, user_id)
-        if not user or user.is_banned or not user.avatar:
+        if not user or not user.avatar:
             raise HTTPException(404)
         return Response(content=user.avatar, media_type=user.avatar_type or "image/jpeg")
 
@@ -886,13 +676,9 @@ async def websocket_endpoint(ws: WebSocket):
 
     async with SessionLocal() as db:
         user = await db.get(User, uid)
-        if not user or user.is_banned:
-            await ws.send_text(json.dumps({"type": "banned", "message": "Этот аккаунт заблокирован"}))
-            await ws.close(code=4003)
-            connections.pop(uid, None)
-            return
-        user.last_seen = datetime.now(timezone.utc)
-        await db.commit()
+        if user:
+            user.last_seen = datetime.now(timezone.utc)
+            await db.commit()
 
     await send_ws(uid, {"type": "connected", "user_id": uid})
     await broadcast_presence(uid, True)
@@ -928,39 +714,6 @@ async def websocket_endpoint(ws: WebSocket):
             if typ == "send":
                 receiver_id = int(data.get("receiver_id", 0))
                 text = str(data.get("text", "")).strip()
-                # /бан and /разбан are private admin commands for @rayf only.
-                if text.lower() in {"/бан", "/разбан"}:
-                    async with SessionLocal() as db:
-                        actor = await db.get(User, uid)
-                        target = await db.get(User, receiver_id) if receiver_id else None
-                        if not actor or actor.is_banned:
-                            await send_ws(uid, {"type": "error", "message": "Этот аккаунт заблокирован"})
-                            continue
-                        if actor.username.lower() != "rayf":
-                            await send_ws(uid, {"type": "error", "message": "Эта команда доступна только @rayf"})
-                            continue
-                        if not target:
-                            await send_ws(uid, {"type": "error", "message": "Пользователь не найден"})
-                            continue
-                        if target.id == actor.id:
-                            await send_ws(uid, {"type": "error", "message": "Нельзя изменить статус @rayf"})
-                            continue
-                        should_ban = text.lower() == "/бан"
-                        target.is_banned = should_ban
-                        await db.commit()
-                        if should_ban:
-                            await send_ws(target.id, {"type": "banned", "message": "Этот аккаунт заблокирован"})
-                            target_ws = connections.get(target.id)
-                            if target_ws:
-                                try:
-                                    await target_ws.close(code=4003)
-                                except Exception:
-                                    pass
-                                connections.pop(target.id, None)
-                            await send_ws(uid, {"type": "admin_action", "message": "Аккаунт заблокирован"})
-                        else:
-                            await send_ws(uid, {"type": "admin_action", "message": "Аккаунт разблокирован"})
-                    continue
                 file_b64 = data.get("file_data")
                 file_name = data.get("file_name")
                 file_type = data.get("file_type")
@@ -983,10 +736,6 @@ async def websocket_endpoint(ws: WebSocket):
                     receiver = await db.get(User, receiver_id)
                     if not receiver:
                         continue
-                    if await is_blocked(db, uid, receiver_id):
-                        await send_ws(uid, {"type": "error", "message": "Пользователь заблокировал вам сообщения"})
-                        continue
-                    await ensure_chat(db, uid, receiver_id)
                     m = Message(
                         sender_id=uid,
                         receiver_id=receiver_id,
@@ -1205,8 +954,6 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  flex:none;
 }
 .chathead .chat-menu:active{transform:scale(.9)}
-.chat-menu + .chat-menu-panel{}
-
 .chathead .verified-badge{vertical-align:middle;margin-left:3px}
 .chathead .dot{display:none}
 @media(max-width:700px){
@@ -1242,13 +989,6 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}
 .verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
 .verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
-/* ===== RayfGram SCAM label for @trushny ===== */
-.scam-badge{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:48px!important;height:18px!important;padding:0 7px!important;margin-left:5px!important;border:1px solid #ff4d5a!important;border-radius:5px!important;background:rgba(110,12,20,.28)!important;color:#ff5965!important;font-size:9px!important;font-weight:900!important;letter-spacing:1.4px!important;line-height:16px!important;vertical-align:middle!important;box-shadow:0 0 8px rgba(255,55,70,.18),inset 0 0 7px rgba(255,55,70,.08)!important;animation:rgScamPop .34s cubic-bezier(.2,.8,.2,1) both,rgScamGlow 2.2s ease-in-out .4s infinite!important;flex:none!important}
-@keyframes rgScamPop{0%{opacity:0;transform:scale(.72)}65%{opacity:1;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
-@keyframes rgScamGlow{0%,100%{box-shadow:0 0 6px rgba(255,55,70,.12),inset 0 0 5px rgba(255,55,70,.05)}50%{box-shadow:0 0 13px rgba(255,55,70,.32),inset 0 0 9px rgba(255,55,70,.12)}}
-.chatname .scam-badge{height:17px!important;min-width:46px!important;font-size:8px!important;letter-spacing:1.2px!important;margin-left:5px!important;vertical-align:-2px!important}
-.profile-name .scam-badge{height:19px!important;min-width:50px!important;font-size:9px!important}
-@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
 .profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
 .profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#2aabee;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #243541,0 12px 35px #0007;align-self:center}
@@ -1260,6 +1000,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
 .profile-action span{display:block;font-size:23px;margin-bottom:3px}
 .profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
+.profile-extra-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 4px}.profile-extra-tab{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:999px;padding:13px 16px;min-height:48px;font-weight:700;transition:transform .18s ease,background .18s ease,box-shadow .18s ease}.profile-extra-tab:hover{background:#2b3239;box-shadow:0 6px 18px #0005}.profile-extra-tab:active{transform:scale(.96)}
 .profile-row{padding:14px 16px;border-bottom:1px solid #252a30}
 .profile-row:last-child{border-bottom:0}
 .profile-label{font-size:13px;color:#8996a3;margin-bottom:4px}
@@ -1531,76 +1272,24 @@ button,.send,.save,.icon,.chat-menu{
 }
 
 
-
-/* ===== RayfGram v3 Cinematic Motion Upgrade ===== */
-@keyframes rgDrawerFade{from{opacity:0}to{opacity:1}}
-@keyframes rgDrawerPanel{from{opacity:0;transform:translateX(34px) scale(.985)}to{opacity:1;transform:translateX(0) scale(1)}}
-@keyframes rgDrawerPanelClose{from{opacity:1;transform:translateX(0) scale(1)}to{opacity:0;transform:translateX(34px) scale(.985)}}
-@keyframes rgSoftRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgSoftScale{0%{opacity:0;transform:scale(.88)}65%{opacity:1;transform:scale(1.035)}100%{opacity:1;transform:scale(1)}}
-@keyframes rgTap{0%{transform:scale(1)}45%{transform:scale(.94)}100%{transform:scale(1)}}
-@keyframes rgSendPop{0%{opacity:0;transform:translateY(8px) scale(.72)}70%{opacity:1;transform:translateY(-1px) scale(1.07)}100%{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgTypingDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
-@keyframes rgToastIn{from{opacity:0;transform:translate(-50%,12px) scale(.92)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
-@keyframes rgAuthIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgGlowLine{0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 24px rgba(255,255,255,.055)}}
-
-#auth .card{animation:rgAuthIn .5s cubic-bezier(.2,.8,.2,1) both}
-.auth .field:focus,.field:focus{box-shadow:0 0 0 2px #303030,0 0 22px rgba(255,255,255,.055)!important;transform:translateY(-1px)}
-.primary:active,.save:active,.send:active,.profile-action:active,.icon:active,.chat-menu:active,.back:active{animation:rgTap .18s ease both}
-
-.drawer.rg-opening{animation:rgDrawerFade .2s ease both}
-.drawer.rg-opening .panel{animation:rgDrawerPanel .3s cubic-bezier(.2,.8,.2,1) both}
-.drawer.rg-closing{animation:rgDrawerFade .22s ease reverse both}
-.drawer.rg-closing .panel{animation:rgDrawerPanelClose .22s ease both}
-
-.drawer .panel h2{animation:rgSoftRise .28s ease .04s both}
-.drawer .panel > .save,
-.drawer .panel > .profile-actions,
-.drawer .panel > .profile-info,
-.drawer .panel > .profile-section{animation:rgSoftRise .28s ease both;animation-delay:calc(var(--rg-i,0) * 35ms + 70ms)}
-.drawer .panel > .save:nth-of-type(1){--rg-i:1}
-.drawer .panel > .save:nth-of-type(2){--rg-i:2}
-.drawer .panel > .save:nth-of-type(3){--rg-i:3}
-.drawer .panel > .save:nth-of-type(4){--rg-i:4}
-.drawer .panel > .save:nth-of-type(5){--rg-i:5}
-
-.profile-hero{animation:rgSoftScale .4s cubic-bezier(.2,.8,.2,1) .05s both}
-.profile-hero .profile-avatar{animation:rgAvatarIn .5s cubic-bezier(.2,.8,.2,1) .1s both}
-.profile-name{animation:rgSoftRise .32s ease .18s both}
-.profile-username{animation:rgSoftRise .32s ease .22s both}
-.profile-status{animation:rgSoftRise .32s ease .26s both}
-.profile-actions{animation:rgSoftRise .32s ease .3s both}
-.profile-info{animation:rgSoftRise .34s ease .34s both}
-
-.msgrow{animation-delay:var(--rg-msg-delay,0ms)!important}
-.msgrow .bubble{transition:transform .18s ease,box-shadow .18s ease}
-.msgrow .bubble:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.32)!important}
-.msgrow.mine .bubble:hover{transform:translateY(-1px) scale(1.008)}
-
-.composer{animation:rgGlowLine 4s ease-in-out infinite}
-.send{position:relative;overflow:hidden}
-.send::after{content:"";position:absolute;inset:-40% -80%;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.10) 50%,transparent 65%);transform:translateX(-65%);animation:rgSendShine 4.8s ease-in-out infinite;pointer-events:none}
-@keyframes rgSendShine{0%,55%{transform:translateX(-65%)}75%,100%{transform:translateX(65%)}}
-
-.chat-menu{transition:transform .16s ease,opacity .16s ease,background .16s ease!important}
-.chat-menu:hover{background:#141414!important}
-
-.toast{animation:rgToastIn .28s cubic-bezier(.2,.8,.2,1) both}
-
-/* Typing state gets a tiny breathing motion without changing the UI. */
-#chatStatus{transition:opacity .18s ease,transform .18s ease}
-#chatStatus.rg-typing{animation:rgSoftRise .22s ease both;font-weight:600}
-
-/* More natural list entrance for longer chat lists. */
-.user:nth-child(9){animation-delay:.18s}.user:nth-child(10){animation-delay:.20s}.user:nth-child(11){animation-delay:.22s}.user:nth-child(12){animation-delay:.24s}.user:nth-child(13){animation-delay:.26s}.user:nth-child(14){animation-delay:.28s}.user:nth-child(15){animation-delay:.30s}
-
-@media(prefers-reduced-motion:reduce){
-  .drawer.rg-opening,.drawer.rg-closing,.drawer.rg-opening .panel,.drawer.rg-closing .panel,
-  #auth .card,.profile-hero,.profile-hero .profile-avatar,.profile-name,.profile-username,.profile-status,
-  .profile-actions,.profile-info,.toast,.send::after{animation:none!important}
+/* ===== RayfGram developer star: @rayf only ===== */
+.rayf-dev-star{
+  display:inline-flex!important;
+  width:19px!important;
+  height:19px!important;
+  margin-right:5px!important;
+  vertical-align:-3px!important;
+  flex:none;
+  cursor:pointer;
+  position:relative;
+  filter:drop-shadow(0 0 4px rgba(180,76,255,.85)) drop-shadow(0 0 9px rgba(130,50,255,.45));
+  animation:rayfStarGlow 1.8s ease-in-out infinite;
 }
-
+.rayf-dev-star svg{width:19px;height:19px;display:block;overflow:visible}
+.rayf-dev-star .star-fill{fill:#a855f7;stroke:#d8a8ff;stroke-width:1}
+@keyframes rayfStarGlow{0%,100%{transform:scale(1);filter:drop-shadow(0 0 4px rgba(180,76,255,.8)) drop-shadow(0 0 8px rgba(130,50,255,.4))}50%{transform:scale(1.08);filter:drop-shadow(0 0 7px rgba(210,130,255,1)) drop-shadow(0 0 15px rgba(130,50,255,.7))}}
+.rayf-dev-star:active{transform:scale(.88)!important}
+@media(prefers-reduced-motion:reduce){.rayf-dev-star{animation:none!important}}
 </style>
 </head>
 <body>
@@ -1680,8 +1369,10 @@ function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img s
 function verifiedBadge(){
   return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
 }
-function scamBadge(){
-  return '<span class="scam-badge" title="Метка SCAM" aria-label="Метка SCAM">SCAM</span>';
+function isRayf(u){return String(u?.username||'').replace(/^@/,'').toLowerCase()==='rayf'}
+function rayfDevStar(u){
+  if(!isRayf(u))return '';
+  return '<button class="rayf-dev-star" type="button" title="ПИН РАЗРАБОТЧИКА" aria-label="ПИН РАЗРАБОТЧИКА" onclick="event.stopPropagation();showToast(\'пин разработчика\')"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="star-fill" d="M12 2.4l2.86 5.79 6.39.93-4.62 4.5 1.09 6.36L12 17l-5.72 3.01 1.09-6.36-4.62-4.5 6.39-.93L12 2.4z"></path></svg></button>';
 }
 function navChats(){closeChat();loadUsers();setNav(0);}
 function navContacts(){$('search').focus();$('search').value='';loadUsers();setNav(1);}
@@ -1693,13 +1384,13 @@ function showRegister(){$('loginBox').classList.add('hidden');$('regBox').classL
 function showLogin(){$('regBox').classList.add('hidden');$('loginBox').classList.remove('hidden')}
 
 async function login(){
- try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok){let j=await r.json().catch(()=>null);throw Error(j?.detail||'Ошибка входа')}let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
+ try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=normalizeVerified(await api('/api/me'));normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
+ try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -1711,16 +1402,6 @@ function connect(){
 function handleWS(d){
  if(d.type==='call_offer'||d.type==='call_answer'||d.type==='call_ice'){handleCall(d);return}
  if(d.type==='group_message'||d.type==='channel_message'){if(communityType&&((d.type==='group_message'&&communityType==='group'&&d.message.group_id===communityId)||(d.type==='channel_message'&&communityType==='channel'&&d.message.channel_id===communityId))){renderCommunityMessage(d.message);scrollBottom()}return}
- if(d.type==='banned'){
-   if(ws){try{ws.close(4003)}catch(e){}}
-   localStorage.removeItem('rayf_token');
-   token=''; me=null; selected=null; users=[];
-   showLogin();
-   showToast(d.message||'Этот аккаунт заблокирован');
-   return;
- }
- if(d.type==='admin_action'){showToast(d.message||'Готово');loadUsers();return}
- if(d.type==='error'){showToast(d.message||'Ошибка');return}
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
  if(d.type==='read'){updateMessageRead(d.message_id)}
  if(d.type==='message_update'){if(selected && (d.message.sender_id===selected.id||d.message.receiver_id===selected.id))renderMessage(d.message,false);loadUsers()}
@@ -1753,23 +1434,17 @@ function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected
 
 function normalizeVerified(u){
   if(!u)return u;
-  const username=String(u.username||'').replace(/^@/,'').toLowerCase();
-  u.verified=['rayf','monk','rayfgrambot'].includes(username);
-  u.scam=username==='trushny';
+  u.verified=['rayf','monk'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
   return u;
 }
 function renderUsers(){
- $('userlist').innerHTML=users.map(u=>{
-   if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
-   if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
-   return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
- }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
+ $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${rayfDevStar(u)}${u.verified?verifiedBadge():''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
  try{
    const q=$('search').value.trim();
-   users=q ? await api('/api/chat-search?q='+encodeURIComponent(q)) : await api('/api/chats');
+   users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
    users=users.map(normalizeVerified);
    renderUsers();
  }catch(e){}
@@ -1801,59 +1476,18 @@ function updateHeader(){
  if(!selected)return;
  const wrap=$('chatAvatarWrap');
  if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
- $('chatName').innerHTML=esc(selected.banned?'УДАЛЕННЫЙ АКАУНТ':(selected.display_name||selected.username))+' '+(selected.banned?'':((selected.verified?verifiedBadge():'')+(selected.scam?scamBadge():'')));
- const status=$('chatStatus');
- const typing=typingUserId===selected.id;
- status.textContent = typing ? 'печатает..' : selected.online ? 'в сети' : 'был(а) недавно';
- status.classList.toggle('rg-typing',typing);
+ $('chatName').innerHTML=rayfDevStar(selected)+esc(selected.display_name||selected.username)+' '+(selected.verified?verifiedBadge():'');
+ $('chatStatus').textContent =
+   typingUserId===selected.id ? 'печатает..' :
+   selected.online ? 'в сети' :
+   'был(а) недавно';
 }
 function showChatMenu(e){
  e?.stopPropagation();
  if(!selected)return;
- const name=esc(selected.display_name||selected.username);
- openDrawer(`<h2>⋮ ${name}</h2>
+ openDrawer(`<h2>⋮ ${esc(selected.display_name||selected.username)}</h2>
    <button class="save" onclick="openPublicProfile('${esc(selected.username)}');closeDrawer()">👤 Открыть профиль</button>
-   <button class="save" style="margin-top:8px" onclick="clearChat()">🗑️ Очистить историю</button>
-   <button class="save" style="margin-top:8px" onclick="deleteChat()">❌ Удалить чат</button>
-   <button class="save" style="margin-top:8px" onclick="blockChatUser()">🚫 Заблокировать</button>
    <button class="save" style="margin-top:8px" onclick="toggleSecret();closeDrawer()">🔒 Секретный режим</button>`);
-}
-async function clearChat(){
- if(!selected)return;
- if(!confirm('Очистить историю? Все сообщения в этом чате будут удалены, но сам чат останется.'))return;
- const id=selected.id;
- try{
-   await api('/api/chats/'+id+'/clear',{method:'POST'});
-   $('messages').innerHTML='<div style="text-align:center;color:#718694;margin-top:30vh">История очищена</div>';
-   closeDrawer();
-   await loadUsers();
-   selected=users.find(u=>u.id===id)||selected;
-   updateHeader();
-   renderUsers();
-   showToast('История чата очищена');
- }catch(e){showToast(e.message)}
-}
-async function deleteChat(){
- if(!selected)return;
- if(!confirm('Удалить чат полностью? История сообщений и чат будут удалены.'))return;
- const id=selected.id;
- try{
-   await api('/api/chats/'+id,{method:'DELETE'});
-   closeDrawer();
-   closeChat();
-   await loadUsers();
-   showToast('Чат удалён');
- }catch(e){showToast(e.message)}
-}
-async function blockChatUser(){
- if(!selected)return;
- if(!confirm('Заблокировать пользователя? Он больше не сможет отправлять тебе сообщения.'))return;
- const id=selected.id;
- try{
-   await api('/api/chats/'+id+'/block',{method:'POST'});
-   closeDrawer();
-   showToast('Пользователь заблокирован');
- }catch(e){showToast(e.message)}
 }
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
@@ -1861,8 +1495,6 @@ function renderMessage(m,append){
  if(!append){let old=$(`m${m.id}`);if(old)old.remove()}
  else if($(`m${m.id}`))return;
  let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='m'+m.id;
- const delay=Math.min($('messages').children.length,12)*18;
- row.style.setProperty('--rg-msg-delay',delay+'ms');
  let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
  let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
@@ -1942,11 +1574,10 @@ function openPublicProfile(username){
  api('/api/profile/'+encodeURIComponent(username)).then(u=>{
    normalizeVerified(u);
    const v=u.verified?verifiedBadge():'';
-   const scam=u.scam?scamBadge():'';
    openDrawer(`<div class="profile-page">
      <div class="profile-hero">
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
-       <div class="profile-name">${esc(u.display_name||u.username)} ${v}${scam}</div>
+       <div class="profile-name">${rayfDevStar(u)}${esc(u.display_name||u.username)} ${v}</div>
        <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
@@ -1961,49 +1592,42 @@ function openPublicProfile(username){
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
      </div>
+     <div class="profile-extra-tabs">
+       <button class="profile-extra-tab" onclick="openGiftsProfile('${esc(u.username)}','${esc(u.display_name||u.username)}')">🎁 Подарки</button>
+       <button class="profile-extra-tab" onclick="openStoriesProfile('${esc(u.username)}','${esc(u.display_name||u.username)}')">◉ Истории</button>
+     </div>
    </div>`);
  }).catch(e=>showToast(e.message))
 }
+function openProfileExtras(kind, username, displayName){
+ const title=kind==='gifts'?'🎁 Подарки':'◉ Истории';
+ const text=kind==='gifts'?'Подарков пока нет':'Историй пока нет';
+ openDrawer(`<div class="profile-page"><div class="profile-hero" style="padding-top:28px"><div style="font-size:58px;line-height:1">${kind==='gifts'?'🎁':'◉'}</div><div class="profile-name" style="margin-top:14px">${title}</div><div class="profile-username" style="margin-top:8px">${esc(displayName||username||'Профиль')}</div></div><div class="profile-section">${esc(text)}</div><div class="profile-info"><div class="profile-row"><div class="profile-value" style="text-align:center;color:#8ea2b1">${esc(text)}</div></div></div></div>`);
+}
+function openGiftsProfile(username, displayName){openProfileExtras('gifts',username,displayName)}
+function openStoriesProfile(username, displayName){openProfileExtras('stories',username,displayName)}
+
 function openCommunities(){openDrawer(`<h2>👥 Сообщества</h2><button class="save" onclick="createGroup()">➕ Создать группу</button><button class="save" onclick="createChannel()">📢 Создать канал</button><button class="save" onclick="joinCommunity()">🔗 Войти по invite-коду</button><div id="communityList" style="margin-top:15px"></div>`);loadCommunities()}
 async function loadCommunities(){try{let gs=await api('/api/groups'),cs=await api('/api/channels');$('communityList').innerHTML='<h3>Группы</h3>'+gs.map(g=>`<div class="user" onclick="selectGroup(${g.id})"><div class="uinfo"><div>👥 ${esc(g.name)}</div><div class="preview">Invite: ${esc(g.invite_code)}</div></div></div>`).join('')+'<h3>Каналы</h3>'+cs.map(c=>`<div class="user" onclick="selectChannel(${c.id})"><div class="uinfo"><div>📢 ${esc(c.name)} @${esc(c.username)}</div><div class="preview">Invite: ${esc(c.invite_code)}</div></div></div>`).join('')||'<p>Пока пусто</p>'}catch(e){}}
-async function createGroup(){let n=prompt('Название группы');if(!n)return;let u=prompt('Username группы без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана и добавлена в чаты');loadCommunities();loadUsers()}catch(e){showToast(e.message)}}
-async function createChannel(){let n=prompt('Название канала');if(!n)return;let u=prompt('Username канала без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/channels',{method:'POST',body:fd});showToast('📢 Канал создан и добавлен в чаты');loadCommunities();loadUsers()}catch(e){showToast(e.message)}}
+async function createGroup(){let n=prompt('Название группы');if(!n)return;let fd=new FormData();fd.append('name',n);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана');loadCommunities()}catch(e){showToast(e.message)}}
+async function createChannel(){let n=prompt('Название канала');if(!n)return;let u=prompt('Username канала без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/channels',{method:'POST',body:fd});showToast('📢 Канал создан');loadCommunities()}catch(e){showToast(e.message)}}
 async function joinCommunity(){let c=prompt('Invite-код');if(!c)return;try{await api('/api/groups/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы вошли в группу');loadCommunities();return}catch(e){}try{await api('/api/channels/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы подписались на канал');loadCommunities()}catch(e){showToast('Неверный invite-код')}}
 
 
 let communityType=null, communityId=null;
-async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;const g=users.find(x=>x.kind==='group'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 '+(g?.name||'Группа');$('chatStatus').textContent=g?.username?'@'+g.username:'';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
-async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;const c=users.find(x=>x.kind==='channel'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 '+(c?.name||'Канал');$('chatStatus').textContent=c?.username?'@'+c.username:'';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 Группа';$('chatStatus').textContent='';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 Канал';$('chatStatus').textContent='';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
 function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
 
-let drawerCloseTimer=null;
-function openDrawer(html){
- clearTimeout(drawerCloseTimer);
- const d=$('drawer');
- $('panelContent').innerHTML=html;
- d.classList.remove('hidden','rg-closing');
- void d.offsetWidth;
- d.classList.add('rg-opening');
-}
-function closeDrawer(){
- const d=$('drawer');
- if(d.classList.contains('hidden'))return;
- clearTimeout(drawerCloseTimer);
- d.classList.remove('rg-opening');
- d.classList.add('rg-closing');
- drawerCloseTimer=setTimeout(()=>{
-   d.classList.add('hidden');
-   d.classList.remove('rg-closing');
- },220);
-}
+function openDrawer(html){$('panelContent').innerHTML=html;$('drawer').classList.remove('hidden')}
+function closeDrawer(){$('drawer').classList.add('hidden')}
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
- const scam=me?.scam?scamBadge():'';
  const status=me?.online?'🟢 в сети':'⚪ офлайн';
  openDrawer(`<div class="profile-page">
    <div class="profile-hero">
      <div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div>
-     <div class="profile-name">${esc(me.display_name||me.username)} ${v}${scam}</div>
+     <div class="profile-name">${esc(me.display_name||me.username)} ${v}</div>
      <div class="profile-username">@${esc(me.username)}</div>
      <div class="profile-status">${status}</div>
    </div>
@@ -2018,6 +1642,10 @@ function openProfile(){
      <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
+   </div>
+   <div class="profile-extra-tabs">
+     <button class="profile-extra-tab" onclick="openGiftsProfile(me.username,me.display_name)">🎁 Подарки</button>
+     <button class="profile-extra-tab" onclick="openStoriesProfile(me.username,me.display_name)">◉ Истории</button>
    </div>
    <div id="profileEditBox"></div>
  </div>`);
