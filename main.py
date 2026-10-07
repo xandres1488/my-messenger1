@@ -1084,7 +1084,7 @@ function updateHeader(){
  if(!selected)return;
  $('chatAvatar').outerHTML=avatarHtml(selected,'avatar');
  $('chatAvatar').id='chatAvatar';
- $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username)}"><span class="chat-display-name">${esc(selected.display_name)}</span> ${selected.verified?verifiedBadge():''}</button>`;
+ $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username||selected.display_name)}"><span class="chat-display-name">${esc(selected.username||selected.display_name)}</span> ${selected.verified?verifiedBadge():''}</button>`;
  $('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно';
 }
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
