@@ -855,14 +855,14 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}
 .verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
 .verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
-.profile-page{padding:10px 4px 30px}
-.profile-hero{text-align:center;padding:10px 0 20px}
-.profile-hero .profile-avatar{width:124px;height:124px;margin:8px auto 14px;border-radius:50%;font-size:42px;background:#2aabee;display:grid;place-items:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #202b35,0 12px 35px #0007}
-.profile-hero .profile-avatar img{width:100%;height:100%;object-fit:cover}
-.profile-name{font-size:28px;font-weight:800;letter-spacing:-.5px}
-.profile-username{color:#8ea2b1;margin-top:5px;font-size:15px}
-.profile-status{margin-top:8px;color:#8ea2b1;font-size:14px}
-.profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:10px 0 18px}
+.profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
+.profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#2aabee;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #243541,0 12px 35px #0007;align-self:center}
+.profile-hero .profile-avatar img{display:block;width:100%;height:100%;object-fit:cover}
+.profile-name{font-size:27px;font-weight:800;letter-spacing:-.5px;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;width:100%}
+.profile-username{color:#8ea2b1;margin-top:7px;font-size:15px;line-height:1.3;width:100%}
+.profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
+.profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:12px 0 18px}
 .profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
 .profile-action span{display:block;font-size:23px;margin-bottom:3px}
 .profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
@@ -1058,7 +1058,7 @@ function openPublicProfile(username){
      <div class="profile-hero">
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
        <div class="profile-name">${esc(u.display_name||u.username)} ${v}</div>
-       <div class="profile-username">@${esc(u.username)} ${v}</div>
+       <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
      <div class="profile-actions">
@@ -1068,7 +1068,7 @@ function openPublicProfile(username){
      </div>
      <div class="profile-section">Информация</div>
      <div class="profile-info">
-       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(u.username)} ${v}</div></div>
+       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(u.username)}</div></div>
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
      </div>
@@ -1107,7 +1107,7 @@ function openProfile(){
    <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
    <div class="profile-section">Информация</div>
    <div class="profile-info">
-     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)} ${v}</div></div>
+     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
    </div>
