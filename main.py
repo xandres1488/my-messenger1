@@ -207,17 +207,6 @@ async def init_db():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        await conn.exec_driver_sql("""
-            INSERT INTO chats (user1_id, user2_id)
-            SELECT DISTINCT LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id)
-            FROM messages
-            WHERE sender_id <> receiver_id
-              AND NOT EXISTS (
-                SELECT 1 FROM chats c
-                WHERE c.user1_id = LEAST(messages.sender_id, messages.receiver_id)
-                  AND c.user2_id = GREATEST(messages.sender_id, messages.receiver_id)
-              )
-        """)
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user1_id ON chats(user1_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user2_id ON chats(user2_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
@@ -306,7 +295,7 @@ async def send_ws(user_id: int, data: dict):
 
 async def ensure_chat(db, a_id: int, b_id: int):
     u1, u2 = sorted((int(a_id), int(b_id)))
-    chat = await db.scalar(select(Chat).where(Chat.user1_id == u1, Chat.user2_id == u2))
+    chat = await db.scalar(select(Chat).where(Chat.user1_id == u1, Chat.user2_id == u2).limit(1))
     if not chat:
         chat = Chat(user1_id=u1, user2_id=u2)
         db.add(chat)
@@ -420,40 +409,50 @@ async def users(request: Request):
 
 @app.get("/api/chats")
 async def chats(request: Request):
-    """Return persistent one-to-one chats. Clearing history does not remove the chat."""
+    """Return persistent chats plus legacy conversations found in messages."""
     user = await current_user(request)
     async with SessionLocal() as db:
         result = await db.execute(
             select(Chat).where(or_(Chat.user1_id == user.id, Chat.user2_id == user.id)).order_by(Chat.created_at.desc())
         )
         chat_rows = result.scalars().all()
-        if not chat_rows:
+
+        other_ids = set()
+        chat_created = {}
+        for c in chat_rows:
+            oid = c.user2_id if c.user1_id == user.id else c.user1_id
+            other_ids.add(oid)
+            chat_created[oid] = c.created_at
+
+        msg_result = await db.execute(
+            select(Message).where(or_(Message.sender_id == user.id, Message.receiver_id == user.id)).order_by(Message.created_at.desc())
+        )
+        msg_rows = msg_result.scalars().all()
+        latest_by_user = {}
+        for m in msg_rows:
+            oid = m.receiver_id if m.sender_id == user.id else m.sender_id
+            if oid == user.id:
+                continue
+            other_ids.add(oid)
+            if oid not in latest_by_user:
+                latest_by_user[oid] = m
+
+        if not other_ids:
             return []
 
-        other_ids = [c.user2_id if c.user1_id == user.id else c.user1_id for c in chat_rows]
-        users_result = await db.execute(select(User).where(User.id.in_(other_ids)))
+        users_result = await db.execute(select(User).where(User.id.in_(list(other_ids))))
         by_id = {u.id: u for u in users_result.scalars().all()}
 
         items = []
-        for c in chat_rows:
-            other_id = c.user2_id if c.user1_id == user.id else c.user1_id
+        for other_id in other_ids:
             u = by_id.get(other_id)
             if not u:
                 continue
-            latest = await db.scalar(
-                select(Message)
-                .where(
-                    or_(
-                        and_(Message.sender_id == user.id, Message.receiver_id == other_id),
-                        and_(Message.sender_id == other_id, Message.receiver_id == user.id),
-                    )
-                )
-                .order_by(Message.created_at.desc())
-                .limit(1)
-            )
+            latest = latest_by_user.get(other_id)
+            created = chat_created.get(other_id) or (latest.created_at if latest else datetime.now(timezone.utc))
             item = user_public(u, u.id in connections)
             item["last_message"] = "" if not latest else ("" if latest.deleted else (latest.text or ("📎 " + (latest.file_name or "Файл"))))
-            item["last_message_at"] = latest.created_at.isoformat() if latest else c.created_at.isoformat()
+            item["last_message_at"] = latest.created_at.isoformat() if latest else created.isoformat()
             item["unread"] = 0
             item["blocked"] = bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))
             items.append(item)
@@ -468,9 +467,12 @@ async def clear_chat(other_id: int, user: User = Depends(current_user)):
         raise HTTPException(400, "Нельзя очистить чат с самим собой")
     async with SessionLocal() as db:
         chat = await db.scalar(select(Chat).where(or_(and_(Chat.user1_id == user.id, Chat.user2_id == other_id), and_(Chat.user1_id == other_id, Chat.user2_id == user.id))))
-        if not chat:
+        has_messages = bool(await db.scalar(select(Message.id).where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))).limit(1)))
+        if not chat and not has_messages:
             raise HTTPException(404, "Чат не найден")
         await db.execute(Message.__table__.delete().where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))))
+        if not chat:
+            await ensure_chat(db, user.id, other_id)
         await db.commit()
         return {"ok": True}
 
