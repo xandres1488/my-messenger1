@@ -844,8 +844,117 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .avatar{width:48px;height:48px;border-radius:50%;background:#2aabee;display:grid;place-items:center;font-weight:800;flex:none;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}
 .uinfo{min-width:0;flex:1}.uname{font-weight:700}.preview{color:#91a3b0;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{width:9px;height:9px;border-radius:50%;background:#35d07f;display:inline-block;margin-right:5px}
 .chat{flex:1;display:flex;flex-direction:column;min-width:0;background:#0e1621}
-.chathead{height:64px;background:#17212b;border-bottom:1px solid #253442;display:flex;align-items:center;padding:8px 14px;gap:10px}
-.chathead .back{display:none}.chatname{font-weight:800}.status{font-size:12px;color:#8da1af;margin-top:3px}
+.chathead{
+ height:64px;
+ min-height:64px;
+ background:#000;
+ border-bottom:1px solid #171717;
+ display:flex;
+ align-items:center;
+ padding:7px 10px 7px 8px;
+ gap:10px;
+ position:relative;
+ z-index:5;
+}
+.chathead .back{
+ display:none;
+ width:44px;
+ height:44px;
+ padding:0;
+ border:0;
+ background:transparent;
+ color:#fff;
+ font-size:40px;
+ line-height:40px;
+ font-weight:300;
+ flex:none;
+}
+.chathead .chat-avatar-wrap{
+ flex:none;
+ display:flex;
+ align-items:center;
+ justify-content:center;
+}
+.chathead .chat-avatar{
+ width:44px;
+ height:44px;
+ border-radius:50%;
+ background:#667887;
+ display:grid;
+ place-items:center;
+ color:#17212b;
+ font-size:21px;
+ font-weight:800;
+ overflow:hidden;
+ flex:none;
+}
+.chathead .chat-avatar img{
+ width:100%;
+ height:100%;
+ object-fit:cover;
+}
+.chathead .chat-main{
+ min-width:0;
+ flex:1;
+ cursor:pointer;
+ padding:1px 0;
+}
+.chatname{
+ font-weight:700;
+ font-size:18px;
+ line-height:22px;
+ color:#fff;
+ white-space:nowrap;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+.status{
+ font-size:15px;
+ line-height:19px;
+ color:#fff;
+ margin-top:0;
+ white-space:nowrap;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+.chathead .chat-menu{
+ width:42px;
+ height:46px;
+ padding:0;
+ border:0;
+ background:transparent;
+ color:#fff;
+ font-size:31px;
+ line-height:42px;
+ flex:none;
+}
+.chathead .chat-menu:active{transform:scale(.9)}
+.chathead .verified-badge{vertical-align:middle;margin-left:3px}
+.chathead .dot{display:none}
+@media(max-width:700px){
+ .chathead{
+   height:58px;
+   min-height:58px;
+   padding:5px 7px 5px 4px;
+   gap:8px;
+ }
+ .chathead .back{
+   display:block;
+ }
+ .chathead .chat-avatar{
+   width:42px;
+   height:42px;
+   font-size:20px;
+ }
+ .chatname{font-size:18px;line-height:21px}
+ .status{font-size:15px;line-height:18px}
+ .chathead .chat-menu{
+   width:40px;
+   height:44px;
+   font-size:30px;
+ }
+}
+
 .messages{flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
 .msgrow{display:flex;margin:5px 0;flex:none}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
 .msgtext{white-space:pre-wrap;word-break:break-word}.meta{font-size:11px;color:#a7bac7;text-align:right;margin-top:3px}.deleted{font-style:italic;color:#91a3b0}
@@ -884,20 +993,6 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
-
-/* ===== RayfGram Motion Pack ===== */
-@keyframes rgFadeUp{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgFadeIn{from{opacity:0}to{opacity:1}}
-@keyframes rgPop{0%{opacity:0;transform:scale(.82)}70%{transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
-@keyframes rgSlideLeft{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:translateX(0)}}
-@keyframes rgSlideRight{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
-@keyframes rgPulse{0%,100%{box-shadow:0 0 0 0 rgba(53,208,127,.15)}50%{box-shadow:0 0 0 7px rgba(53,208,127,0)}}
-@keyframes rgGlow{0%,100%{box-shadow:0 0 0 0 rgba(42,171,238,0)}50%{box-shadow:0 0 22px rgba(42,171,238,.28)}}
-@keyframes rgTyping{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-4px);opacity:1}}
-.card{animation:rgFadeUp .55s cubic-bezier(.2,.8,.2,1) both}.logo{animation:rgPop .7s .08s both}.primary,.send,.save{transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.primary:hover,.send:hover,.save:hover{filter:brightness(1.08);box-shadow:0 7px 22px rgba(42,171,238,.18)}.primary:active,.send:active,.save:active,.icon:active,.profile-action:active{transform:scale(.94)}
-.sidebar{animation:rgSlideLeft .45s ease both}.chat{animation:rgFadeIn .45s ease both}.chathead{transition:background .25s ease}.chathead:hover{background:#1b2a36}.user{animation:rgSlideLeft .32s ease both;transition:transform .18s ease,background .18s ease}.user:hover{transform:translateX(3px)}.user:nth-child(2){animation-delay:.03s}.user:nth-child(3){animation-delay:.06s}.user:nth-child(4){animation-delay:.09s}.user:nth-child(5){animation-delay:.12s}
-.avatar{transition:transform .25s ease,box-shadow .25s ease}.user:hover .avatar,.chathead:hover .avatar{transform:scale(1.06)}.dot{animation:rgPulse 1.8s infinite}.messages{scroll-behavior:smooth}.msgrow{animation:rgFadeUp .28s cubic-bezier(.2,.8,.2,1) both}.msgrow.mine{animation-name:rgSlideRight}.msgrow:not(.mine){animation-name:rgSlideLeft}.bubble{transition:transform .16s ease,box-shadow .16s ease}.bubble:hover{transform:translateY(-1px);box-shadow:0 5px 16px #0005}.verified-badge{animation:rgPop .5s .12s both}.profile-hero{animation:rgFadeUp .42s ease both}.profile-hero .profile-avatar{animation:rgPop .55s .08s both}.profile-name{animation:rgFadeUp .4s .16s both}.profile-actions{animation:rgFadeUp .4s .22s both}.profile-info{animation:rgFadeUp .4s .28s both}.profile-action{transition:transform .18s ease,background .18s ease,box-shadow .18s ease}.profile-action:hover{transform:translateY(-2px);background:#292f36;box-shadow:0 7px 20px #0004}.drawer{animation:rgFadeIn .2s ease both}.panel{animation:rgSlideRight .28s cubic-bezier(.2,.8,.2,1) both}.toast{animation:rgFadeUp .25s ease both}.bottom-nav{animation:rgFadeUp .35s .1s both}.bottom-nav button{transition:transform .18s ease,background .18s ease,color .18s ease}.bottom-nav button:active{transform:scale(.9)}.search{transition:box-shadow .2s ease,transform .2s ease}.search:focus{box-shadow:0 0 0 2px rgba(42,171,238,.22);transform:scale(1.01)}.composer textarea{transition:box-shadow .2s ease,background .2s ease}.composer textarea:focus{box-shadow:0 0 0 2px rgba(42,171,238,.18);background:#101b25}.icon{transition:transform .16s ease,background .16s ease,color .16s ease}.icon:hover{transform:translateY(-1px)}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
@@ -936,9 +1031,15 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  </aside>
  <main class="chat" id="chat">
   <div class="chathead">
-   <button class="icon back" onclick="closeChat()">‹</button>
-   <div id="chatAvatar" class="avatar">?</div>
-   <div style="min-width:0;flex:1" onclick="selected&&openPublicProfile(selected.username)"><div id="chatName" class="chatname">Выберите чат</div><div id="chatStatus" class="status"></div></div><button class="icon" onclick="startCall()">📞</button><button class="icon" onclick="toggleSecret()">🔒</button>
+   <button class="icon back" onclick="closeChat()" aria-label="Назад">‹</button>
+   <div id="chatAvatarWrap" class="chat-avatar-wrap">
+    <div id="chatAvatar" class="chat-avatar">?</div>
+   </div>
+   <div class="chat-main" onclick="selected&&openPublicProfile(selected.username)">
+    <div id="chatName" class="chatname">Выберите чат</div>
+    <div id="chatStatus" class="status"></div>
+   </div>
+   <button class="chat-menu" onclick="showChatMenu(event)" aria-label="Меню">⋮</button>
   </div>
   <div id="messages" class="messages"><div style="text-align:center;color:#718694;margin-top:30vh">Выберите пользователя 👈</div></div>
   <div class="composer">
@@ -1020,7 +1121,20 @@ async function selectUser(id){
  renderUsers();
 }
 function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
-function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').innerHTML=esc(selected.display_name)+' '+(selected.verified?verifiedBadge():'');$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
+function updateHeader(){
+ if(!selected)return;
+ const wrap=$('chatAvatarWrap');
+ if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
+ $('chatName').innerHTML=esc(selected.display_name||selected.username)+' '+(selected.verified?verifiedBadge():'');
+ $('chatStatus').textContent=selected.online?'был(а) недавно':'был(а) недавно';
+}
+function showChatMenu(e){
+ e?.stopPropagation();
+ if(!selected)return;
+ openDrawer(`<h2>⋮ ${esc(selected.display_name||selected.username)}</h2>
+   <button class="save" onclick="openPublicProfile('${esc(selected.username)}');closeDrawer()">👤 Открыть профиль</button>
+   <button class="save" style="margin-top:8px" onclick="toggleSecret();closeDrawer()">🔒 Секретный режим</button>`);
+}
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
  if(!selected)return;
@@ -1153,19 +1267,6 @@ async function searchMessages(){
 }
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
 if(token)startApp();
-
-// ===== Motion helpers =====
-function animateNewMessage(row){
-  if(!row)return;
-  row.style.animation='none';
-  row.offsetHeight;
-  row.style.animation='';
-}
-function animateList(){
-  document.querySelectorAll('#userlist .user').forEach((el,i)=>{el.style.animationDelay=Math.min(i*0.025,.2)+'s';});
-}
-const _renderUsers=renderUsers;
-renderUsers=function(){_renderUsers();animateList();};
 </script>
 </body>
 </html>
