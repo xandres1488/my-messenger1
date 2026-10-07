@@ -1351,7 +1351,7 @@ async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=await api('/api/me');$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
+ try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -1406,6 +1406,7 @@ async function loadUsers(){
  try{
    const q=$('search').value.trim();
    users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
+   users=users.map(normalizeVerified);
    renderUsers();
  }catch(e){}
 }
@@ -1532,6 +1533,7 @@ async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){sho
 async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:d.from_id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);ws.send(JSON.stringify({type:'call_answer',peer_id:d.from_id,sdp:ans}))}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
 function openPublicProfile(username){
  api('/api/profile/'+encodeURIComponent(username)).then(u=>{
+   normalizeVerified(u);
    const v=u.verified?verifiedBadge():'';
    openDrawer(`<div class="profile-page">
      <div class="profile-hero">
