@@ -993,6 +993,213 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
+
+/* ===== RayfGram Black & Gray Theme + Motion Pack ===== */
+:root{
+  --rg-black:#050505;
+  --rg-dark:#0b0b0b;
+  --rg-panel:#111111;
+  --rg-panel2:#171717;
+  --rg-line:#252525;
+  --rg-gray:#8d8d8d;
+  --rg-light:#d8d8d8;
+  --rg-white:#f4f4f4;
+  --rg-bubble:#1b1b1b;
+  --rg-bubble-mine:#292929;
+  --rg-shadow:rgba(0,0,0,.55);
+}
+html,body{
+  background:var(--rg-black)!important;
+  color:var(--rg-white)!important;
+}
+body{
+  transition:background .35s ease,color .35s ease;
+}
+button,input,textarea,select{
+  transition:background-color .22s ease,border-color .22s ease,color .22s ease,
+              transform .16s ease,box-shadow .22s ease,opacity .22s ease;
+}
+button:active{transform:scale(.96)}
+button:hover{filter:brightness(1.12)}
+.hidden{transition:opacity .2s ease,transform .2s ease}
+
+/* Main surfaces */
+.app,.drawer,.panel,.sidebar,.chat,.auth,.modal,.settings,.profile{
+  background:var(--rg-dark)!important;
+  color:var(--rg-white)!important;
+}
+.sidebar,.chathead,.composer,.bottom-nav{
+  background:var(--rg-panel)!important;
+  border-color:var(--rg-line)!important;
+}
+.user:hover,.user.active{
+  background:#1d1d1d!important;
+}
+.search{
+  background:#151515!important;
+  color:var(--rg-white)!important;
+  border:1px solid #242424!important;
+}
+.search:focus{
+  box-shadow:0 0 0 2px #3a3a3a,0 0 18px rgba(255,255,255,.06);
+}
+
+/* Remove blue/colored accents */
+button,.send,.save,.icon,.chat-menu{
+  color:var(--rg-white)!important;
+}
+.send,.save{
+  background:#2b2b2b!important;
+  border:1px solid #3a3a3a!important;
+}
+.send:hover,.save:hover{background:#3a3a3a!important}
+.composer textarea{
+  background:#101010!important;
+  color:var(--rg-white)!important;
+  border:1px solid #242424!important;
+}
+.bubble{
+  background:var(--rg-bubble)!important;
+  box-shadow:0 2px 8px var(--rg-shadow)!important;
+  border:1px solid #242424;
+}
+.mine .bubble{
+  background:var(--rg-bubble-mine)!important;
+  border-color:#383838;
+}
+.meta,.status,.preview{color:#9b9b9b!important}
+.dot{background:#bdbdbd!important;box-shadow:0 0 8px rgba(255,255,255,.28)}
+.verified-badge{filter:grayscale(1);opacity:.95}
+.avatar,.chat-avatar{
+  background:#5b5b5b!important;
+  color:#111!important;
+  box-shadow:0 0 0 1px #343434,0 4px 14px rgba(0,0,0,.45);
+}
+
+/* Header */
+.chathead{
+  background:#000!important;
+  border-bottom:1px solid #202020!important;
+  box-shadow:0 2px 16px rgba(0,0,0,.45);
+}
+.chathead .back,.chathead .chat-menu{
+  color:#e8e8e8!important;
+}
+.chathead .chat-main:hover .chatname{
+  color:#fff;
+}
+
+/* Messages background */
+.messages{
+  background:
+    radial-gradient(circle at 50% 10%,#181818 0%,#0c0c0c 48%,#050505 100%)!important;
+}
+
+/* File cards / menus */
+.file,.context button{
+  background:#191919!important;
+  color:#ddd!important;
+  border-color:#2a2a2a!important;
+}
+.file:hover,.context button:hover{background:#262626!important}
+
+/* ===== Animations ===== */
+@keyframes rgPageIn{
+  from{opacity:0;transform:translateY(8px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes rgChatOpen{
+  from{opacity:0;transform:translateX(22px)}
+  to{opacity:1;transform:translateX(0)}
+}
+@keyframes rgChatHead{
+  from{opacity:0;transform:translateY(-12px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes rgAvatarIn{
+  0%{opacity:0;transform:scale(.72)}
+  70%{transform:scale(1.08)}
+  100%{opacity:1;transform:scale(1)}
+}
+@keyframes rgMessageIn{
+  from{opacity:0;transform:translateY(10px) scale(.97)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+@keyframes rgMineIn{
+  from{opacity:0;transform:translateX(14px) scale(.97)}
+  to{opacity:1;transform:translateX(0) scale(1)}
+}
+@keyframes rgOtherIn{
+  from{opacity:0;transform:translateX(-14px) scale(.97)}
+  to{opacity:1;transform:translateX(0) scale(1)}
+}
+@keyframes rgUserIn{
+  from{opacity:0;transform:translateX(-12px)}
+  to{opacity:1;transform:translateX(0)}
+}
+@keyframes rgButtonGlow{
+  0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}
+  50%{box-shadow:0 0 16px rgba(255,255,255,.08)}
+}
+@keyframes rgPulseGray{
+  0%,100%{box-shadow:0 0 0 0 rgba(220,220,220,.12)}
+  50%{box-shadow:0 0 0 7px rgba(220,220,220,0)}
+}
+@keyframes rgSearch{
+  from{transform:scale(.985);opacity:.8}
+  to{transform:scale(1);opacity:1}
+}
+@keyframes rgBottom{
+  from{opacity:0;transform:translateY(12px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+.app{animation:rgPageIn .35s ease both}
+.chathead{animation:rgChatHead .3s ease both}
+.chat.chat-open{animation:rgChatOpen .3s cubic-bezier(.2,.8,.2,1) both}
+.chat-avatar{animation:rgAvatarIn .42s cubic-bezier(.2,.8,.2,1) both}
+.chatname,.status{animation:rgPageIn .35s ease .06s both}
+.search:focus{animation:rgSearch .2s ease both}
+.bottom-nav{animation:rgBottom .35s ease both}
+.send,.save{animation:rgButtonGlow 3s ease-in-out infinite}
+
+.msgrow{
+  animation:rgMessageIn .28s ease both;
+  transform-origin:bottom;
+}
+.msgrow.mine{animation-name:rgMineIn}
+.msgrow:not(.mine){animation-name:rgOtherIn}
+
+.user{
+  animation:rgUserIn .28s ease both;
+}
+.user:nth-child(1){animation-delay:.02s}
+.user:nth-child(2){animation-delay:.04s}
+.user:nth-child(3){animation-delay:.06s}
+.user:nth-child(4){animation-delay:.08s}
+.user:nth-child(5){animation-delay:.10s}
+.user:nth-child(6){animation-delay:.12s}
+.user:nth-child(7){animation-delay:.14s}
+.user:nth-child(8){animation-delay:.16s}
+
+.dot{animation:rgPulseGray 1.8s ease-in-out infinite}
+.avatar:hover,.chat-avatar:hover{
+  transform:scale(1.045);
+  transition:transform .2s ease,box-shadow .2s ease;
+  box-shadow:0 0 0 1px #555,0 0 18px rgba(255,255,255,.08);
+}
+.chat-menu:hover,.back:hover{transform:scale(1.08)}
+.chat-menu:active,.back:active{transform:scale(.9)}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.001ms!important;
+    scroll-behavior:auto!important;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -1117,7 +1324,13 @@ async function loadUsers(){
 }
 async function selectUser(id){
  selected=users.find(u=>u.id===id);if(!selected)return;
- $('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');updateHeader();await loadMessages();
+ $('sidebar').classList.add('chat-open');
+ const chat=$('chat');
+ chat.classList.remove('chat-open');
+ void chat.offsetWidth;
+ chat.classList.add('chat-open');
+ updateHeader();
+ await loadMessages();
  renderUsers();
 }
 function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
@@ -1145,7 +1358,13 @@ function renderMessage(m,append){
  let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
  row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
- $('messages').appendChild(row);if(append)scrollBottom()
+ $('messages').appendChild(row);
+ if(append){
+   row.style.animation='none';
+   void row.offsetWidth;
+   row.style.animation='';
+   scrollBottom();
+ }
 }
 function updateMessageRead(id){let row=$(`m${id}`);if(row){let meta=row.querySelector('.meta');if(meta&&!meta.textContent.includes('✓✓'))meta.textContent+=' ✓✓'}}
 function scrollBottom(){let x=$('messages');x.scrollTop=x.scrollHeight}
