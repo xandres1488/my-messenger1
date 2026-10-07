@@ -215,7 +215,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "online": online,
         "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
-        "verified": user.username.lower() == "monk",
+        "verified": user.username.lower() in {"rayf", "monk"},
         "twofa": bool(user.totp_enabled),
     }
 
@@ -1084,7 +1084,7 @@ function updateHeader(){
  if(!selected)return;
  $('chatAvatar').outerHTML=avatarHtml(selected,'avatar');
  $('chatAvatar').id='chatAvatar';
- $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username)}"><span class="chat-display-name">${esc(selected.display_name)}</span> ${selected.verified?verifiedBadge():''}<span class="chat-username">@${esc(selected.username)}</span></button>`;
+ $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username)}"><span class="chat-display-name">${esc(selected.display_name)}</span> ${selected.verified?verifiedBadge():''}</button>`;
  $('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно';
 }
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
