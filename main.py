@@ -240,22 +240,43 @@ def msg_public(m: Message) -> dict:
     }
 
 
-# Connected users: user_id -> websocket
-connections: dict[int, WebSocket] = {}
+# Stable connection manager: one user may have several tabs/devices.
+# Keeping all sockets prevents a reconnect in one tab from breaking another tab.
+connections: dict[int, set[WebSocket]] = {}
 
 
 async def send_ws(user_id: int, data: dict):
-    ws = connections.get(user_id)
-    if ws:
+    sockets = list(connections.get(user_id, set()))
+    if not sockets:
+        return
+    payload = json.dumps(data, ensure_ascii=False)
+    dead = []
+    for ws in sockets:
         try:
-            await ws.send_text(json.dumps(data))
+            await ws.send_text(payload)
         except Exception:
+            dead.append(ws)
+    if dead:
+        current = connections.get(user_id, set())
+        for ws in dead:
+            current.discard(ws)
+        if not current:
             connections.pop(user_id, None)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTMLResponse(HTML)
+
+
+@app.get("/health")
+async def health():
+    try:
+        async with SessionLocal() as db:
+            await db.execute(select(User.id).limit(1))
+        return {"ok": True, "database": "ok"}
+    except Exception:
+        return JSONResponse({"ok": False, "database": "error"}, status_code=503)
 
 
 
@@ -652,13 +673,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=1008)
         return
 
-    old = connections.get(uid)
-    if old and old is not ws:
-        try:
-            await old.close()
-        except Exception:
-            pass
-    connections[uid] = ws
+    connections.setdefault(uid, set()).add(ws)
 
     async with SessionLocal() as db:
         user = await db.get(User, uid)
@@ -804,7 +819,11 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception:
         pass
     finally:
-        if connections.get(uid) is ws:
+        sockets = connections.get(uid, set())
+        sockets.discard(ws)
+        if sockets:
+            connections[uid] = sockets
+        else:
             connections.pop(uid, None)
             async with SessionLocal() as db:
                 user = await db.get(User, uid)
@@ -1021,7 +1040,7 @@ body{animation:rfFadeIn .35s ease both}
 
 <script>
 let token=localStorage.getItem('rayf_token');
-let me=null, users=[], selected=null, ws=null, reconnectTimer=null, pendingFile=null, editingId=null, pingTimer=null;
+let me=null, users=[], selected=null, ws=null, reconnectTimer=null, pendingFile=null, editingId=null, pingTimer=null, reconnectDelay=800, chatLoadSeq=0, outgoingQueue=[];
 const $=id=>document.getElementById(id);
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -1047,11 +1066,32 @@ async function startApp(){
  try{me=await api('/api/me');$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
 }
 function connect(){
+ if(!token)return;
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
- let proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
- ws.onopen=()=>{clearTimeout(reconnectTimer);clearInterval(pingTimer);pingTimer=setInterval(()=>{if(ws?.readyState===1)ws.send(JSON.stringify({type:'ping'}))},25000)};
- ws.onclose=()=>{clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connect,1800)};
- ws.onmessage=e=>handleWS(JSON.parse(e.data));
+ let proto=location.protocol==='https:'?'wss':'ws';
+ ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+ ws.onopen=()=>{
+   reconnectDelay=800;
+   clearTimeout(reconnectTimer);
+   clearInterval(pingTimer);
+   pingTimer=setInterval(()=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'ping'}))},25000);
+   while(outgoingQueue.length && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(outgoingQueue.shift()));
+ };
+ ws.onclose=()=>{
+   clearInterval(pingTimer);
+   clearTimeout(reconnectTimer);
+   reconnectTimer=setTimeout(connect,reconnectDelay);
+   reconnectDelay=Math.min(reconnectDelay*1.7,10000);
+ };
+ ws.onerror=()=>{};
+ ws.onmessage=e=>{try{handleWS(JSON.parse(e.data))}catch(_){}};
+}
+function wsSend(data){
+ if(ws?.readyState===WebSocket.OPEN){ws.send(JSON.stringify(data));return true}
+ if(outgoingQueue.length<30)outgoingQueue.push(data);
+ connect();
+ showToast('Соединение восстанавливается…');
+ return false;
 }
 function handleWS(d){
  if(d.type==='call_offer'||d.type==='call_answer'||d.type==='call_ice'){handleCall(d);return}
@@ -1072,7 +1112,7 @@ async function loadUsers(){
    const q=$('search').value.trim();
    users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
    renderUsers();
- }catch(e){}
+ }catch(e){showToast('Не удалось обновить список чатов')}
 }
 async function selectUser(id){
  // Always resolve the exact user that was clicked before opening the chat.
@@ -1083,6 +1123,7 @@ async function selectUser(id){
  }
  if(!clicked){showToast('Пользователь не найден');return}
  selected=clicked;
+ chatLoadSeq++;
  communityType=null;communityId=null;
  $('messages').innerHTML='';
  $('sidebar').classList.add('chat-open');
@@ -1100,7 +1141,20 @@ function updateHeader(){
  $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(chatLabel)}"><span class="chat-display-name">${esc(chatLabel)}</span> ${selected.verified?verifiedBadge():''}</button>`;
  $('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно';
 }
-async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
+async function loadMessages(){
+ const target=selected;
+ if(!target)return;
+ const seq=++chatLoadSeq;
+ try{
+   let ms=await api('/api/messages/'+target.id);
+   if(seq!==chatLoadSeq||!selected||selected.id!==target.id)return;
+   $('messages').innerHTML='';
+   ms.forEach(m=>renderMessage(m,false));
+   scrollBottom();
+ }catch(e){
+   if(seq===chatLoadSeq)showToast('Не удалось загрузить сообщения');
+ }
+}
 function renderMessage(m,append){
  if(!selected)return;
  if(!append){let old=$(`m${m.id}`);if(old)old.remove()}
@@ -1119,21 +1173,21 @@ function pickedFile(){pendingFile=$('fileInput').files[0]||null;if(pendingFile)s
 async function sendMessage(){
  if(communityType&&ws&&ws.readyState===1){
   let text=$('text').value.trim();if(!text)return;
-  ws.send(JSON.stringify({type:communityType==='group'?'group_send':'channel_send',group_id:communityType==='group'?communityId:undefined,channel_id:communityType==='channel'?communityId:undefined,text,reply_to_id:replyToId}));
+  wsSend({type:communityType==='group'?'group_send':'channel_send',group_id:communityType==='group'?communityId:undefined,channel_id:communityType==='channel'?communityId:undefined,text,reply_to_id:replyToId});
   $('text').value='';replyToId=null;return;
  }
- if(!selected||!ws||ws.readyState!==1)return;
+ if(!selected)return;
  let text=$('text').value.trim();if(!text&&!pendingFile)return;
- if(editingId){ws.send(JSON.stringify({type:'edit',message_id:editingId,text}));editingId=null;$('text').value='';return}
+ if(editingId){wsSend({type:'edit',message_id:editingId,text});editingId=null;$('text').value='';return}
  let data={type:'send',receiver_id:selected.id,text:secretMode?xorSecret(text):text,reply_to_id:replyToId,secret:secretMode};
  if(pendingFile){if(pendingFile.size>8*1024*1024){showToast('Файл максимум 8 МБ');return}let b64=await fileToBase64(pendingFile);data.file_data=b64;data.file_name=pendingFile.name;data.file_type=pendingFile.type||'application/octet-stream'}
- ws.send(JSON.stringify(data));$('text').value='';$('fileInput').value='';pendingFile=null;replyToId=null;
+ wsSend(data);$('text').value='';$('fileInput').value='';pendingFile=null;replyToId=null;
 }
 function fileToBase64(f){return new Promise((res,rej)=>{let r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(f)})}
 function openContext(e,id,canEdit){e.preventDefault();let c=$('ctx');c.style.left=Math.min(e.clientX,innerWidth-190)+'px';c.style.top=Math.min(e.clientY,innerHeight-220)+'px';c.innerHTML='';let b=document.createElement('button');b.textContent='↩️ Ответить';b.onclick=()=>replyMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='😂 Реакция';b.onclick=()=>reactMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='📌 Закрепить';b.onclick=()=>pinMessage(id);c.appendChild(b);if(canEdit){b=document.createElement('button');b.textContent='✏️ Редактировать';b.onclick=()=>editMessage(id);c.appendChild(b);b=document.createElement('button');b.textContent='🗑️ Удалить';b.onclick=()=>deleteMessage(id);c.appendChild(b)}c.classList.remove('hidden')}
 document.addEventListener('click',e=>{if(!$('ctx').contains(e.target))$('ctx').classList.add('hidden')});
 function editMessage(id){$('ctx').classList.add('hidden');let row=$(`m${id}`);let t=row?.querySelector('.msgtext')?.textContent||'';$('text').value=t;editingId=id;$('text').focus();showToast('Редактирование — отправь изменённый текст')}
-function deleteMessage(id){$('ctx').classList.add('hidden');if(confirm('Удалить сообщение?'))ws.send(JSON.stringify({type:'delete',message_id:id}))}
+function deleteMessage(id){$('ctx').classList.add('hidden');if(confirm('Удалить сообщение?'))wsSend({type:'delete',message_id:id})}
 
 let replyToId=null, secretMode=false, mediaRecorder=null, audioChunks=[];
 function replyMessage(id){$('ctx').classList.add('hidden');replyToId=id;showToast('↩️ Ответ на сообщение #'+id);$('text').focus()}
@@ -1142,8 +1196,8 @@ async function pinMessage(id){$('ctx').classList.add('hidden');try{await api('/a
 function toggleSecret(){secretMode=!secretMode;showToast(secretMode?'🔒 Секретный режим включён':'🔓 Секретный режим выключен')}
 function xorSecret(text){let key=localStorage.getItem('rayf_secret_key');if(!key){key=prompt('Придумай общий секретный ключ для этого чата');if(!key)return text;localStorage.setItem('rayf_secret_key',key)}let out='';for(let i=0;i<text.length;i++)out+=String.fromCharCode(text.charCodeAt(i)^key.charCodeAt(i%key.length));return btoa(unescape(encodeURIComponent(out)))}
 async function startVoice(){if(!selected)return;try{let stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=async()=>{let blob=new Blob(audioChunks,{type:'audio/webm'});pendingFile=new File([blob],'voice-message.webm',{type:'audio/webm'});await sendMessage();stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();showToast('🎤 Запись до 15 секунд…');setTimeout(()=>{if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop()},15000)}catch(e){showToast('Разреши микрофон для голосового сообщения')}}
-async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){showToast('Звонки не поддерживаются');return}try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:selected.id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};let offer=await pc.createOffer();await pc.setLocalDescription(offer);ws.send(JSON.stringify({type:'call_offer',peer_id:selected.id,sdp:offer}));showToast('📞 Звоним…')}catch(e){showToast('Разреши микрофон')}}
-async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:d.from_id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);ws.send(JSON.stringify({type:'call_answer',peer_id:d.from_id,sdp:ans}))}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
+async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){showToast('Звонки не поддерживаются');return}try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)wsSend({type:'call_ice',peer_id:selected.id,candidate:e.candidate})};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};let offer=await pc.createOffer();await pc.setLocalDescription(offer);wsSend({type:'call_offer',peer_id:selected.id,sdp:offer});showToast('📞 Звоним…')}catch(e){showToast('Разреши микрофон')}}
+async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)wsSend({type:'call_ice',peer_id:d.from_id,candidate:e.candidate})};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);wsSend({type:'call_answer',peer_id:d.from_id,sdp:ans})}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
 function openPublicProfile(username){
  api('/api/profile/'+encodeURIComponent(username)).then(u=>{
    const v=u.verified?verifiedBadge():'';
