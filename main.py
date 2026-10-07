@@ -56,7 +56,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     totp_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    stars: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class Message(Base):
@@ -168,10 +167,6 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE messages SET deleted = FALSE WHERE deleted IS NULL")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
-        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars INTEGER DEFAULT 0")
-        await conn.exec_driver_sql("UPDATE users SET stars = 0 WHERE stars IS NULL")
-        # Однократное первоначальное зачисление: 99 999 ⭐ только аккаунту @rayf.
-        await conn.exec_driver_sql("UPDATE users SET stars = 99999 WHERE LOWER(username) = 'rayf' AND stars = 0")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
@@ -220,9 +215,8 @@ def user_public(user: User, online: bool = False) -> dict:
         "online": online,
         "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
-        "verified": user.username.lower() == "rayf",
+        "verified": user.username.lower() in {"rayf", "monk", "rayfgrambot"},
         "twofa": bool(user.totp_enabled),
-        "stars": int(user.stars or 0),
     }
 
 
@@ -310,7 +304,6 @@ async def register(username: str = Form(...), password: str = Form(...), display
             password_hash=password_hash.hash(password),
             display_name=display_name or username,
             last_seen=datetime.now(timezone.utc),
-            stars=0,
         )
         db.add(user)
         await db.commit()
@@ -863,19 +856,19 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
 .verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
 .profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
-.profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#2aabee;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #243541,0 12px 35px #0007;align-self:center}
+.profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#242424 0%,#121212 100%);border:1px solid #333;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#3a3a3a;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #303030,0 12px 35px #0009;align-self:center}
 .profile-hero .profile-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 .profile-name{font-size:27px;font-weight:800;letter-spacing:-.5px;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;width:100%}
 .profile-username{color:#8ea2b1;margin-top:7px;font-size:15px;line-height:1.3;width:100%}
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:12px 0 18px}
-.profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
+.profile-action{background:#1b1b1b;border:1px solid #303030;color:#f2f2f2;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
 .profile-action span{display:block;font-size:23px;margin-bottom:3px}
-.profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
-.profile-row{padding:14px 16px;border-bottom:1px solid #252a30}
+.profile-info{background:#141414;border-radius:20px;overflow:hidden;border:1px solid #2b2b2b}
+.profile-row{padding:14px 16px;border-bottom:1px solid #292929}
 .profile-row:last-child{border-bottom:0}
-.profile-label{font-size:13px;color:#8996a3;margin-bottom:4px}
+.profile-label{font-size:13px;color:#8f8f8f;margin-bottom:4px}
 .profile-value{font-size:16px;word-break:break-word}
 .profile-verified{color:#2aabee;font-weight:700;margin-top:10px}
 .profile-section{margin:16px 4px 8px;color:#8b9aa8;font-size:13px;font-weight:700}
@@ -1133,19 +1126,10 @@ async function saveProfile(){try{let fd=new FormData();fd.append('display_name',
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <p>RayfStar</p><button class="save" onclick="openRayfStar()">⭐ RayfStar</button>
- <p style="margin-top:18px">Звёзды</p><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button>
- <p style="margin-top:25px">Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
+ <p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
-}
-async function openRayfStar(){
- try{me=await api('/api/me')}catch(e){}
- openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:72px;line-height:1">⭐</div><div style="font-size:34px;font-weight:800;margin-top:18px">${Number(me?.stars||0).toLocaleString('ru-RU')}</div><div style="color:#9a9a9a;margin-top:8px">звёзд на аккаунте</div></div>`);
-}
-function openBuyStars(){
- openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#bdbdbd;font-size:22px;font-weight:700">Скоро появится</div>`);
 }
 async function setup2FA(){try{let d=await api('/api/2fa/setup',{method:'POST'});let code=prompt('Секрет 2FA: '+d.secret+'\nДобавь его в Authenticator и введи текущий 6-значный код');if(!code)return;let fd=new FormData();fd.append('code',code);await api('/api/2fa/enable',{method:'POST',body:fd});showToast('🔐 2FA включена')}catch(e){showToast(e.message)}}
 async function enableNotifications(){if(!('Notification'in window)){showToast('Браузер не поддерживает уведомления');return}let p=await Notification.requestPermission();showToast(p==='granted'?'Уведомления включены':'Уведомления отключены')}
