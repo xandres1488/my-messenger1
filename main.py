@@ -56,7 +56,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     totp_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    stars: Mapped[int] = mapped_column(Integer, default=0)
+    stars: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class Message(Base):
@@ -170,6 +170,8 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars INTEGER DEFAULT 0")
         await conn.exec_driver_sql("UPDATE users SET stars = 0 WHERE stars IS NULL")
+        # Однократное первоначальное зачисление: 99 999 ⭐ только аккаунту @rayf.
+        await conn.exec_driver_sql("UPDATE users SET stars = 99999 WHERE LOWER(username) = 'rayf' AND stars = 0")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
@@ -257,16 +259,6 @@ async def send_ws(user_id: int, data: dict):
             connections.pop(user_id, None)
 
 
-@app.get("/api/rayfstar")
-async def rayfstar(user: User = Depends(current_user)):
-    return {"stars": int(user.stars or 0)}
-
-
-@app.get("/api/stars")
-async def stars(user: User = Depends(current_user)):
-    return {"stars": int(user.stars or 0)}
-
-
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTMLResponse(HTML)
@@ -318,6 +310,7 @@ async def register(username: str = Form(...), password: str = Form(...), display
             password_hash=password_hash.hash(password),
             display_name=display_name or username,
             last_seen=datetime.now(timezone.utc),
+            stars=0,
         )
         db.add(user)
         await db.commit()
@@ -700,17 +693,6 @@ async def websocket_endpoint(ws: WebSocket):
                         await db.commit()
                 continue
 
-            if typ == "typing":
-                # Typing state is transient: it is never written to the database.
-                peer_id = int(data.get("peer_id") or 0)
-                if peer_id and peer_id != uid:
-                    await send_ws(peer_id, {
-                        "type": "typing",
-                        "user_id": uid,
-                        "typing": bool(data.get("typing", False))
-                    })
-                continue
-
             if typ == "send":
                 receiver_id = int(data.get("receiver_id", 0))
                 text = str(data.get("text", "")).strip()
@@ -869,117 +851,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .avatar{width:48px;height:48px;border-radius:50%;background:#2aabee;display:grid;place-items:center;font-weight:800;flex:none;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}
 .uinfo{min-width:0;flex:1}.uname{font-weight:700}.preview{color:#91a3b0;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{width:9px;height:9px;border-radius:50%;background:#35d07f;display:inline-block;margin-right:5px}
 .chat{flex:1;display:flex;flex-direction:column;min-width:0;background:#0e1621}
-.chathead{
- height:64px;
- min-height:64px;
- background:#000;
- border-bottom:1px solid #171717;
- display:flex;
- align-items:center;
- padding:7px 10px 7px 8px;
- gap:10px;
- position:relative;
- z-index:5;
-}
-.chathead .back{
- display:none;
- width:44px;
- height:44px;
- padding:0;
- border:0;
- background:transparent;
- color:#fff;
- font-size:40px;
- line-height:40px;
- font-weight:300;
- flex:none;
-}
-.chathead .chat-avatar-wrap{
- flex:none;
- display:flex;
- align-items:center;
- justify-content:center;
-}
-.chathead .chat-avatar{
- width:44px;
- height:44px;
- border-radius:50%;
- background:#667887;
- display:grid;
- place-items:center;
- color:#17212b;
- font-size:21px;
- font-weight:800;
- overflow:hidden;
- flex:none;
-}
-.chathead .chat-avatar img{
- width:100%;
- height:100%;
- object-fit:cover;
-}
-.chathead .chat-main{
- min-width:0;
- flex:1;
- cursor:pointer;
- padding:1px 0;
-}
-.chatname{
- font-weight:700;
- font-size:18px;
- line-height:22px;
- color:#fff;
- white-space:nowrap;
- overflow:hidden;
- text-overflow:ellipsis;
-}
-.status{
- font-size:15px;
- line-height:19px;
- color:#fff;
- margin-top:0;
- white-space:nowrap;
- overflow:hidden;
- text-overflow:ellipsis;
-}
-.chathead .chat-menu{
- width:42px;
- height:46px;
- padding:0;
- border:0;
- background:transparent;
- color:#fff;
- font-size:31px;
- line-height:42px;
- flex:none;
-}
-.chathead .chat-menu:active{transform:scale(.9)}
-.chathead .verified-badge{vertical-align:middle;margin-left:3px}
-.chathead .dot{display:none}
-@media(max-width:700px){
- .chathead{
-   height:58px;
-   min-height:58px;
-   padding:5px 7px 5px 4px;
-   gap:8px;
- }
- .chathead .back{
-   display:block;
- }
- .chathead .chat-avatar{
-   width:42px;
-   height:42px;
-   font-size:20px;
- }
- .chatname{font-size:18px;line-height:21px}
- .status{font-size:15px;line-height:18px}
- .chathead .chat-menu{
-   width:40px;
-   height:44px;
-   font-size:30px;
- }
-}
-
+.chathead{height:64px;background:#17212b;border-bottom:1px solid #253442;display:flex;align-items:center;padding:8px 14px;gap:10px}
+.chathead .back{display:none}.chatname{font-weight:800}.status{font-size:12px;color:#8da1af;margin-top:3px}
 .messages{flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
 .msgrow{display:flex;margin:5px 0;flex:none}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
 .msgtext{white-space:pre-wrap;word-break:break-word}.meta{font-size:11px;color:#a7bac7;text-align:right;margin-top:3px}.deleted{font-style:italic;color:#91a3b0}
@@ -1018,258 +891,6 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
-
-/* ===== RayfGram Black & Gray Theme + Motion Pack ===== */
-:root{
-  --rg-black:#050505;
-  --rg-dark:#0b0b0b;
-  --rg-panel:#111111;
-  --rg-panel2:#171717;
-  --rg-line:#252525;
-  --rg-gray:#8d8d8d;
-  --rg-light:#d8d8d8;
-  --rg-white:#f4f4f4;
-  --rg-bubble:#1b1b1b;
-  --rg-bubble-mine:#292929;
-  --rg-shadow:rgba(0,0,0,.55);
-}
-html,body{
-  background:var(--rg-black)!important;
-  color:var(--rg-white)!important;
-}
-body{
-  transition:background .35s ease,color .35s ease;
-}
-button,input,textarea,select{
-  transition:background-color .22s ease,border-color .22s ease,color .22s ease,
-              transform .16s ease,box-shadow .22s ease,opacity .22s ease;
-}
-button:active{transform:scale(.96)}
-button:hover{filter:brightness(1.12)}
-.hidden{transition:opacity .2s ease,transform .2s ease}
-
-/* Main surfaces */
-.app,.drawer,.panel,.sidebar,.chat,.auth,.modal,.settings,.profile{
-  background:var(--rg-dark)!important;
-  color:var(--rg-white)!important;
-}
-.sidebar,.chathead,.composer,.bottom-nav{
-  background:var(--rg-panel)!important;
-  border-color:var(--rg-line)!important;
-}
-.user:hover,.user.active{
-  background:#1d1d1d!important;
-}
-.search{
-  background:#151515!important;
-  color:var(--rg-white)!important;
-  border:1px solid #242424!important;
-}
-.search:focus{
-  box-shadow:0 0 0 2px #3a3a3a,0 0 18px rgba(255,255,255,.06);
-}
-
-/* Remove blue/colored accents */
-button,.send,.save,.icon,.chat-menu{
-  color:var(--rg-white)!important;
-}
-.send,.save{
-  background:#2b2b2b!important;
-  border:1px solid #3a3a3a!important;
-}
-.send:hover,.save:hover{background:#3a3a3a!important}
-.composer textarea{
-  background:#101010!important;
-  color:var(--rg-white)!important;
-  border:1px solid #242424!important;
-}
-.bubble{
-  background:var(--rg-bubble)!important;
-  box-shadow:0 2px 8px var(--rg-shadow)!important;
-  border:1px solid #242424;
-}
-.mine .bubble{
-  background:var(--rg-bubble-mine)!important;
-  border-color:#383838;
-}
-.meta,.status,.preview{color:#9b9b9b!important}
-.dot{background:#bdbdbd!important;box-shadow:0 0 8px rgba(255,255,255,.28)}
-
-.avatar,.chat-avatar{
-  background:#5b5b5b!important;
-  color:#111!important;
-  box-shadow:0 0 0 1px #343434,0 4px 14px rgba(0,0,0,.45);
-}
-
-/* Header */
-.chathead{
-  background:#000!important;
-  border-bottom:1px solid #202020!important;
-  box-shadow:0 2px 16px rgba(0,0,0,.45);
-}
-.chathead .back,.chathead .chat-menu{
-  color:#e8e8e8!important;
-}
-.chathead .chat-main:hover .chatname{
-  color:#fff;
-}
-.chathead .status{
-  transition:opacity .18s ease,transform .18s ease,color .18s ease;
-}
-.chathead .status:has(+ *){}
-
-
-/* Messages background */
-.messages{
-  background:
-    radial-gradient(circle at 50% 10%,#181818 0%,#0c0c0c 48%,#050505 100%)!important;
-}
-
-/* File cards / menus */
-.file,.context button{
-  background:#191919!important;
-  color:#ddd!important;
-  border-color:#2a2a2a!important;
-}
-.file:hover,.context button:hover{background:#262626!important}
-
-/* ===== Animations ===== */
-@keyframes rgPageIn{
-  from{opacity:0;transform:translateY(8px)}
-  to{opacity:1;transform:translateY(0)}
-}
-@keyframes rgChatOpen{
-  from{opacity:0;transform:translateX(22px)}
-  to{opacity:1;transform:translateX(0)}
-}
-@keyframes rgChatHead{
-  from{opacity:0;transform:translateY(-12px)}
-  to{opacity:1;transform:translateY(0)}
-}
-@keyframes rgAvatarIn{
-  0%{opacity:0;transform:scale(.72)}
-  70%{transform:scale(1.08)}
-  100%{opacity:1;transform:scale(1)}
-}
-@keyframes rgMessageIn{
-  from{opacity:0;transform:translateY(10px) scale(.97)}
-  to{opacity:1;transform:translateY(0) scale(1)}
-}
-@keyframes rgMineIn{
-  from{opacity:0;transform:translateX(14px) scale(.97)}
-  to{opacity:1;transform:translateX(0) scale(1)}
-}
-@keyframes rgOtherIn{
-  from{opacity:0;transform:translateX(-14px) scale(.97)}
-  to{opacity:1;transform:translateX(0) scale(1)}
-}
-@keyframes rgUserIn{
-  from{opacity:0;transform:translateX(-12px)}
-  to{opacity:1;transform:translateX(0)}
-}
-@keyframes rgButtonGlow{
-  0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}
-  50%{box-shadow:0 0 16px rgba(255,255,255,.08)}
-}
-@keyframes rgPulseGray{
-  0%,100%{box-shadow:0 0 0 0 rgba(220,220,220,.12)}
-  50%{box-shadow:0 0 0 7px rgba(220,220,220,0)}
-}
-@keyframes rgSearch{
-  from{transform:scale(.985);opacity:.8}
-  to{transform:scale(1);opacity:1}
-}
-@keyframes rgBottom{
-  from{opacity:0;transform:translateY(12px)}
-  to{opacity:1;transform:translateY(0)}
-}
-
-.app{animation:rgPageIn .35s ease both}
-.chathead{animation:rgChatHead .3s ease both}
-.chat.chat-open{animation:rgChatOpen .3s cubic-bezier(.2,.8,.2,1) both}
-.chat-avatar{animation:rgAvatarIn .42s cubic-bezier(.2,.8,.2,1) both}
-.chatname,.status{animation:rgPageIn .35s ease .06s both}
-.search:focus{animation:rgSearch .2s ease both}
-.bottom-nav{animation:rgBottom .35s ease both}
-.send,.save{animation:rgButtonGlow 3s ease-in-out infinite}
-
-.msgrow{
-  animation:rgMessageIn .28s ease both;
-  transform-origin:bottom;
-}
-.msgrow.mine{animation-name:rgMineIn}
-.msgrow:not(.mine){animation-name:rgOtherIn}
-
-.user{
-  animation:rgUserIn .28s ease both;
-}
-.user:nth-child(1){animation-delay:.02s}
-.user:nth-child(2){animation-delay:.04s}
-.user:nth-child(3){animation-delay:.06s}
-.user:nth-child(4){animation-delay:.08s}
-.user:nth-child(5){animation-delay:.10s}
-.user:nth-child(6){animation-delay:.12s}
-.user:nth-child(7){animation-delay:.14s}
-.user:nth-child(8){animation-delay:.16s}
-
-.dot{animation:rgPulseGray 1.8s ease-in-out infinite}
-.avatar:hover,.chat-avatar:hover{
-  transform:scale(1.045);
-  transition:transform .2s ease,box-shadow .2s ease;
-  box-shadow:0 0 0 1px #555,0 0 18px rgba(255,255,255,.08);
-}
-.chat-menu:hover,.back:hover{transform:scale(1.08)}
-.chat-menu:active,.back:active{transform:scale(.9)}
-
-@media(prefers-reduced-motion:reduce){
-  *,*::before,*::after{
-    animation-duration:.001ms!important;
-    animation-iteration-count:1!important;
-    transition-duration:.001ms!important;
-    scroll-behavior:auto!important;
-  }
-}
-
-
-/* ===== RayfGram blue verification ===== */
-.verified-badge{
-  display:inline-flex!important;
-  width:18px!important;
-  height:18px!important;
-  margin-left:4px!important;
-  vertical-align:-3px!important;
-  flex:none;
-  filter:none!important;
-  opacity:1!important;
-  line-height:0;
-  position:relative;
-  animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both;
-}
-.verified-badge svg{
-  width:18px;
-  height:18px;
-  display:block;
-  overflow:visible;
-}
-.verified-badge circle{fill:#20a7ff}
-.verified-badge path{
-  fill:none;
-  stroke:#fff;
-  stroke-width:2.35;
-  stroke-linecap:round;
-  stroke-linejoin:round;
-}
-@keyframes rgVerifiedPop{
-  0%{opacity:0;transform:scale(.55) rotate(-8deg)}
-  65%{opacity:1;transform:scale(1.12) rotate(2deg)}
-  100%{opacity:1;transform:scale(1) rotate(0)}
-}
-.chatname .verified-badge{
-  width:18px!important;
-  height:18px!important;
-  vertical-align:-3px!important;
-}
-
 </style>
 </head>
 <body>
@@ -1308,21 +929,15 @@ button,.send,.save,.icon,.chat-menu{
  </aside>
  <main class="chat" id="chat">
   <div class="chathead">
-   <button class="icon back" onclick="closeChat()" aria-label="Назад">‹</button>
-   <div id="chatAvatarWrap" class="chat-avatar-wrap">
-    <div id="chatAvatar" class="chat-avatar">?</div>
-   </div>
-   <div class="chat-main" onclick="selected&&openPublicProfile(selected.username)">
-    <div id="chatName" class="chatname">Выберите чат</div>
-    <div id="chatStatus" class="status"></div>
-   </div>
-   <button class="chat-menu" onclick="showChatMenu(event)" aria-label="Меню">⋮</button>
+   <button class="icon back" onclick="closeChat()">‹</button>
+   <div id="chatAvatar" class="avatar">?</div>
+   <div style="min-width:0;flex:1" onclick="selected&&openPublicProfile(selected.username)"><div id="chatName" class="chatname">Выберите чат</div><div id="chatStatus" class="status"></div></div><button class="icon" onclick="startCall()">📞</button><button class="icon" onclick="toggleSecret()">🔒</button>
   </div>
   <div id="messages" class="messages"><div style="text-align:center;color:#718694;margin-top:30vh">Выберите пользователя 👈</div></div>
   <div class="composer">
    <input id="fileInput" type="file" hidden onchange="pickedFile()">
    <button class="icon attach" onclick="fileInput.click()">📎</button>
-   <textarea id="text" rows="1" placeholder="Сообщение..." oninput="onTextInput()" onkeydown="keySend(event)"></textarea>
+   <textarea id="text" rows="1" placeholder="Сообщение..." onkeydown="keySend(event)"></textarea>
    <button class="icon" onclick="startVoice()">🎤</button><button class="send" onclick="sendMessage()">➤</button>
   </div>
  </main>
@@ -1340,15 +955,12 @@ button,.send,.save,.icon,.chat-menu{
 <script>
 let token=localStorage.getItem('rayf_token');
 let me=null, users=[], selected=null, ws=null, reconnectTimer=null, pendingFile=null, editingId=null, pingTimer=null;
-let typingTimer=null, isTyping=false, typingUserId=null;
 const $=id=>document.getElementById(id);
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function initials(u){return esc((u?.display_name||u?.username||'?').slice(0,1).toUpperCase());}
 function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;}
-function verifiedBadge(){
-  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
-}
+function verifiedBadge(){return '<span class="verified-badge" aria-label="Подтверждённый аккаунт"></span>';}
 function navChats(){closeChat();loadUsers();setNav(0);}
 function navContacts(){$('search').focus();$('search').value='';loadUsers();setNav(1);}
 function setNav(i){document.querySelectorAll('.bottom-nav button').forEach((b,n)=>b.classList.toggle('active',n===i));}
@@ -1365,7 +977,7 @@ async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
+ try{me=await api('/api/me');$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');showLogin()}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -1380,38 +992,10 @@ function handleWS(d){
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
  if(d.type==='read'){updateMessageRead(d.message_id)}
  if(d.type==='message_update'){if(selected && (d.message.sender_id===selected.id||d.message.receiver_id===selected.id))renderMessage(d.message,false);loadUsers()}
- if(d.type==='presence'){
-   let u=users.find(x=>x.id===d.user_id);
-   if(u){u.online=d.online;renderUsers()}
-   if(selected&&selected.id===d.user_id){
-     selected.online=d.online;
-     if(typingUserId!==selected.id)updateHeader();
-   }
- }
- if(d.type==='typing'){
-   if(selected&&selected.id===d.user_id){
-     typingUserId=d.typing?d.user_id:null;
-     updateHeader();
-     if(d.typing){
-       clearTimeout(selected._typingResetTimer);
-       selected._typingResetTimer=setTimeout(()=>{
-         if(selected&&selected.id===d.user_id){
-           typingUserId=null;
-           updateHeader();
-         }
-       },3500);
-     }
-   }
- }
+ if(d.type==='presence'){let u=users.find(x=>x.id===d.user_id);if(u){u.online=d.online;renderUsers()}if(selected&&selected.id===d.user_id){selected.online=d.online;updateHeader()}}
  if(d.type==='profile'){me.avatar=d.avatar;openProfile()}
 }
 function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected?.id!==m.sender_id && 'Notification' in window && Notification.permission==='granted'){new Notification('RayfGram',{body:m.text||'📎 Файл'})}}
-
-function normalizeVerified(u){
-  if(!u)return u;
-  u.verified=['rayf','monk'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
-  return u;
-}
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
  ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
@@ -1420,50 +1004,16 @@ async function loadUsers(){
  try{
    const q=$('search').value.trim();
    users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
-   users=users.map(normalizeVerified);
    renderUsers();
  }catch(e){}
 }
 async function selectUser(id){
- if(selected?.id!==id)stopTyping();
- typingUserId=null;
  selected=users.find(u=>u.id===id);if(!selected)return;
- $('sidebar').classList.add('chat-open');
- const chat=$('chat');
- chat.classList.remove('chat-open');
- void chat.offsetWidth;
- chat.classList.add('chat-open');
- updateHeader();
- await loadMessages();
+ $('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');updateHeader();await loadMessages();
  renderUsers();
 }
-function closeChat(){
- stopTyping();
- clearTimeout(selected?._typingResetTimer);
- typingUserId=null;
- $('sidebar').classList.remove('chat-open');
- $('chat').classList.remove('chat-open');
- selected=null;
- communityType=null;
- communityId=null;
-}
-function updateHeader(){
- if(!selected)return;
- const wrap=$('chatAvatarWrap');
- if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
- $('chatName').innerHTML=esc(selected.display_name||selected.username)+' '+(selected.verified?verifiedBadge():'');
- $('chatStatus').textContent =
-   typingUserId===selected.id ? 'печатает..' :
-   selected.online ? 'в сети' :
-   'был(а) недавно';
-}
-function showChatMenu(e){
- e?.stopPropagation();
- if(!selected)return;
- openDrawer(`<h2>⋮ ${esc(selected.display_name||selected.username)}</h2>
-   <button class="save" onclick="openPublicProfile('${esc(selected.username)}');closeDrawer()">👤 Открыть профиль</button>
-   <button class="save" style="margin-top:8px" onclick="toggleSecret();closeDrawer()">🔒 Секретный режим</button>`);
-}
+function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
+function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').innerHTML=esc(selected.display_name)+' '+(selected.verified?verifiedBadge():'');$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
  if(!selected)return;
@@ -1474,47 +1024,11 @@ function renderMessage(m,append){
  let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
  row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
- $('messages').appendChild(row);
- if(append){
-   row.style.animation='none';
-   void row.offsetWidth;
-   row.style.animation='';
-   scrollBottom();
- }
+ $('messages').appendChild(row);if(append)scrollBottom()
 }
 function updateMessageRead(id){let row=$(`m${id}`);if(row){let meta=row.querySelector('.meta');if(meta&&!meta.textContent.includes('✓✓'))meta.textContent+=' ✓✓'}}
 function scrollBottom(){let x=$('messages');x.scrollTop=x.scrollHeight}
-function sendTypingState(value){
- if(!selected||!ws||ws.readyState!==1)return;
- ws.send(JSON.stringify({type:'typing',peer_id:selected.id,typing:!!value}));
-}
-function stopTyping(){
- clearTimeout(typingTimer);
- if(isTyping){
-   isTyping=false;
-   sendTypingState(false);
- }
-}
-function onTextInput(){
- if(!selected||!ws||ws.readyState!==1)return;
- if(!$('text').value.trim()){
-   stopTyping();
-   return;
- }
- if(!isTyping){
-   isTyping=true;
-   sendTypingState(true);
- }
- clearTimeout(typingTimer);
- typingTimer=setTimeout(stopTyping,1800);
-}
-function keySend(e){
- if(e.key==='Enter'&&!e.shiftKey){
-   e.preventDefault();
-   stopTyping();
-   sendMessage();
- }
-}
+function keySend(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function pickedFile(){pendingFile=$('fileInput').files[0]||null;if(pendingFile)showToast('Прикреплено: '+pendingFile.name)}
 async function sendMessage(){
  if(communityType&&ws&&ws.readyState===1){
@@ -1523,7 +1037,6 @@ async function sendMessage(){
   $('text').value='';replyToId=null;return;
  }
  if(!selected||!ws||ws.readyState!==1)return;
- stopTyping();
  let text=$('text').value.trim();if(!text&&!pendingFile)return;
  if(editingId){ws.send(JSON.stringify({type:'edit',message_id:editingId,text}));editingId=null;$('text').value='';return}
  let data={type:'send',receiver_id:selected.id,text:secretMode?xorSecret(text):text,reply_to_id:replyToId,secret:secretMode};
@@ -1547,7 +1060,6 @@ async function startCall(){if(!selected)return;if(!window.RTCPeerConnection){sho
 async function handleCall(d){if(d.type==='call_offer'){showToast('📞 Входящий звонок');if(!selected||selected.id!==d.from_id)return;try{const pc=new RTCPeerConnection();window.callPC=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.onicecandidate=e=>{if(e.candidate)ws.send(JSON.stringify({type:'call_ice',peer_id:d.from_id,candidate:e.candidate}))};pc.ontrack=e=>{let a=document.getElementById('remoteAudio')||Object.assign(document.createElement('audio'),{id:'remoteAudio',autoplay:true});a.srcObject=e.streams[0];if(!a.parentNode)document.body.appendChild(a)};await pc.setRemoteDescription(d.sdp);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);ws.send(JSON.stringify({type:'call_answer',peer_id:d.from_id,sdp:ans}))}catch(e){showToast('Нет доступа к микрофону')}}if(d.type==='call_answer'&&window.callPC)await window.callPC.setRemoteDescription(d.sdp);if(d.type==='call_ice'&&window.callPC&&d.candidate)try{await window.callPC.addIceCandidate(d.candidate)}catch(e){}}
 function openPublicProfile(username){
  api('/api/profile/'+encodeURIComponent(username)).then(u=>{
-   normalizeVerified(u);
    const v=u.verified?verifiedBadge():'';
    openDrawer(`<div class="profile-page">
      <div class="profile-hero">
@@ -1619,16 +1131,21 @@ function startProfileEdit(){
 }
 async function saveProfile(){try{let fd=new FormData();fd.append('display_name',$('pname').value);fd.append('bio',$('pbio').value);me=await api('/api/profile',{method:'POST',body:fd});showToast('Профиль сохранён');loadUsers()}catch(e){showToast(e.message)}}
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
-async function openRayfStar(){
- try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
-}
-function openBuyStars(){openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#8d8d8d;font-size:18px">Скоро появится</div>`)}
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
+ <p>RayfStar</p><button class="save" onclick="openRayfStar()">⭐ RayfStar</button>
+ <p style="margin-top:18px">Звёзды</p><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button>
+ <p style="margin-top:25px">Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
+}
+async function openRayfStar(){
+ try{me=await api('/api/me')}catch(e){}
+ openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:72px;line-height:1">⭐</div><div style="font-size:34px;font-weight:800;margin-top:18px">${Number(me?.stars||0).toLocaleString('ru-RU')}</div><div style="color:#9a9a9a;margin-top:8px">звёзд на аккаунте</div></div>`);
+}
+function openBuyStars(){
+ openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#bdbdbd;font-size:22px;font-weight:700">Скоро появится</div>`);
 }
 async function setup2FA(){try{let d=await api('/api/2fa/setup',{method:'POST'});let code=prompt('Секрет 2FA: '+d.secret+'\nДобавь его в Authenticator и введи текущий 6-значный код');if(!code)return;let fd=new FormData();fd.append('code',code);await api('/api/2fa/enable',{method:'POST',body:fd});showToast('🔐 2FA включена')}catch(e){showToast(e.message)}}
 async function enableNotifications(){if(!('Notification'in window)){showToast('Браузер не поддерживает уведомления');return}let p=await Notification.requestPermission();showToast(p==='granted'?'Уведомления включены':'Уведомления отключены')}
