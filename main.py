@@ -1394,6 +1394,77 @@ button,.send,.save,.icon,.chat-menu{
   vertical-align:-3px!important;
 }
 
+
+
+/* ===== RayfGram v3 Cinematic Motion Upgrade ===== */
+@keyframes rgDrawerFade{from{opacity:0}to{opacity:1}}
+@keyframes rgDrawerPanel{from{opacity:0;transform:translateX(34px) scale(.985)}to{opacity:1;transform:translateX(0) scale(1)}}
+@keyframes rgDrawerPanelClose{from{opacity:1;transform:translateX(0) scale(1)}to{opacity:0;transform:translateX(34px) scale(.985)}}
+@keyframes rgSoftRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgSoftScale{0%{opacity:0;transform:scale(.88)}65%{opacity:1;transform:scale(1.035)}100%{opacity:1;transform:scale(1)}}
+@keyframes rgTap{0%{transform:scale(1)}45%{transform:scale(.94)}100%{transform:scale(1)}}
+@keyframes rgSendPop{0%{opacity:0;transform:translateY(8px) scale(.72)}70%{opacity:1;transform:translateY(-1px) scale(1.07)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgTypingDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
+@keyframes rgToastIn{from{opacity:0;transform:translate(-50%,12px) scale(.92)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
+@keyframes rgAuthIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgGlowLine{0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 24px rgba(255,255,255,.055)}}
+
+#auth .card{animation:rgAuthIn .5s cubic-bezier(.2,.8,.2,1) both}
+.auth .field:focus,.field:focus{box-shadow:0 0 0 2px #303030,0 0 22px rgba(255,255,255,.055)!important;transform:translateY(-1px)}
+.primary:active,.save:active,.send:active,.profile-action:active,.icon:active,.chat-menu:active,.back:active{animation:rgTap .18s ease both}
+
+.drawer.rg-opening{animation:rgDrawerFade .2s ease both}
+.drawer.rg-opening .panel{animation:rgDrawerPanel .3s cubic-bezier(.2,.8,.2,1) both}
+.drawer.rg-closing{animation:rgDrawerFade .22s ease reverse both}
+.drawer.rg-closing .panel{animation:rgDrawerPanelClose .22s ease both}
+
+.drawer .panel h2{animation:rgSoftRise .28s ease .04s both}
+.drawer .panel > .save,
+.drawer .panel > .profile-actions,
+.drawer .panel > .profile-info,
+.drawer .panel > .profile-section{animation:rgSoftRise .28s ease both;animation-delay:calc(var(--rg-i,0) * 35ms + 70ms)}
+.drawer .panel > .save:nth-of-type(1){--rg-i:1}
+.drawer .panel > .save:nth-of-type(2){--rg-i:2}
+.drawer .panel > .save:nth-of-type(3){--rg-i:3}
+.drawer .panel > .save:nth-of-type(4){--rg-i:4}
+.drawer .panel > .save:nth-of-type(5){--rg-i:5}
+
+.profile-hero{animation:rgSoftScale .4s cubic-bezier(.2,.8,.2,1) .05s both}
+.profile-hero .profile-avatar{animation:rgAvatarIn .5s cubic-bezier(.2,.8,.2,1) .1s both}
+.profile-name{animation:rgSoftRise .32s ease .18s both}
+.profile-username{animation:rgSoftRise .32s ease .22s both}
+.profile-status{animation:rgSoftRise .32s ease .26s both}
+.profile-actions{animation:rgSoftRise .32s ease .3s both}
+.profile-info{animation:rgSoftRise .34s ease .34s both}
+
+.msgrow{animation-delay:var(--rg-msg-delay,0ms)!important}
+.msgrow .bubble{transition:transform .18s ease,box-shadow .18s ease}
+.msgrow .bubble:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.32)!important}
+.msgrow.mine .bubble:hover{transform:translateY(-1px) scale(1.008)}
+
+.composer{animation:rgGlowLine 4s ease-in-out infinite}
+.send{position:relative;overflow:hidden}
+.send::after{content:"";position:absolute;inset:-40% -80%;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.10) 50%,transparent 65%);transform:translateX(-65%);animation:rgSendShine 4.8s ease-in-out infinite;pointer-events:none}
+@keyframes rgSendShine{0%,55%{transform:translateX(-65%)}75%,100%{transform:translateX(65%)}}
+
+.chat-menu{transition:transform .16s ease,opacity .16s ease,background .16s ease!important}
+.chat-menu:hover{background:#141414!important}
+
+.toast{animation:rgToastIn .28s cubic-bezier(.2,.8,.2,1) both}
+
+/* Typing state gets a tiny breathing motion without changing the UI. */
+#chatStatus{transition:opacity .18s ease,transform .18s ease}
+#chatStatus.rg-typing{animation:rgSoftRise .22s ease both;font-weight:600}
+
+/* More natural list entrance for longer chat lists. */
+.user:nth-child(9){animation-delay:.18s}.user:nth-child(10){animation-delay:.20s}.user:nth-child(11){animation-delay:.22s}.user:nth-child(12){animation-delay:.24s}.user:nth-child(13){animation-delay:.26s}.user:nth-child(14){animation-delay:.28s}.user:nth-child(15){animation-delay:.30s}
+
+@media(prefers-reduced-motion:reduce){
+  .drawer.rg-opening,.drawer.rg-closing,.drawer.rg-opening .panel,.drawer.rg-closing .panel,
+  #auth .card,.profile-hero,.profile-hero .profile-avatar,.profile-name,.profile-username,.profile-status,
+  .profile-actions,.profile-info,.toast,.send::after{animation:none!important}
+}
+
 </style>
 </head>
 <body>
@@ -1577,10 +1648,10 @@ function updateHeader(){
  const wrap=$('chatAvatarWrap');
  if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
  $('chatName').innerHTML=esc(selected.display_name||selected.username)+' '+(selected.verified?verifiedBadge():'');
- $('chatStatus').textContent =
-   typingUserId===selected.id ? 'печатает..' :
-   selected.online ? 'в сети' :
-   'был(а) недавно';
+ const status=$('chatStatus');
+ const typing=typingUserId===selected.id;
+ status.textContent = typing ? 'печатает..' : selected.online ? 'в сети' : 'был(а) недавно';
+ status.classList.toggle('rg-typing',typing);
 }
 function showChatMenu(e){
  e?.stopPropagation();
@@ -1636,6 +1707,8 @@ function renderMessage(m,append){
  if(!append){let old=$(`m${m.id}`);if(old)old.remove()}
  else if($(`m${m.id}`))return;
  let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='m'+m.id;
+ const delay=Math.min($('messages').children.length,12)*18;
+ row.style.setProperty('--rg-msg-delay',delay+'ms');
  let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
  let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
@@ -1748,8 +1821,26 @@ async function selectGroup(id){closeDrawer();communityType='group';communityId=i
 async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 Канал';$('chatStatus').textContent='';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
 function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
 
-function openDrawer(html){$('panelContent').innerHTML=html;$('drawer').classList.remove('hidden')}
-function closeDrawer(){$('drawer').classList.add('hidden')}
+let drawerCloseTimer=null;
+function openDrawer(html){
+ clearTimeout(drawerCloseTimer);
+ const d=$('drawer');
+ $('panelContent').innerHTML=html;
+ d.classList.remove('hidden','rg-closing');
+ void d.offsetWidth;
+ d.classList.add('rg-opening');
+}
+function closeDrawer(){
+ const d=$('drawer');
+ if(d.classList.contains('hidden'))return;
+ clearTimeout(drawerCloseTimer);
+ d.classList.remove('rg-opening');
+ d.classList.add('rg-closing');
+ drawerCloseTimer=setTimeout(()=>{
+   d.classList.add('hidden');
+   d.classList.remove('rg-closing');
+ },220);
+}
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
  const status=me?.online?'🟢 в сети':'⚪ офлайн';
