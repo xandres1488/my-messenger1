@@ -265,6 +265,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "last_seen": None if banned else (user.last_seen.isoformat() if user.last_seen else None),
         "avatar": None if banned else (f"/api/avatar/{user.id}" if user.avatar else None),
         "verified": False if banned else user.username.lower() in {"rayf", "monk", "rayfgrambot"},
+        "scam": False if banned else user.username.lower() == "trushny",
         "twofa": False if banned else bool(user.totp_enabled),
         "stars": 0 if banned else int(user.stars or 0),
         "banned": banned,
@@ -1241,6 +1242,13 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}
 .verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
 .verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
+/* ===== RayfGram SCAM label for @trushny ===== */
+.scam-badge{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:48px!important;height:18px!important;padding:0 7px!important;margin-left:5px!important;border:1px solid #ff4d5a!important;border-radius:5px!important;background:rgba(110,12,20,.28)!important;color:#ff5965!important;font-size:9px!important;font-weight:900!important;letter-spacing:1.4px!important;line-height:16px!important;vertical-align:middle!important;box-shadow:0 0 8px rgba(255,55,70,.18),inset 0 0 7px rgba(255,55,70,.08)!important;animation:rgScamPop .34s cubic-bezier(.2,.8,.2,1) both,rgScamGlow 2.2s ease-in-out .4s infinite!important;flex:none!important}
+@keyframes rgScamPop{0%{opacity:0;transform:scale(.72)}65%{opacity:1;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
+@keyframes rgScamGlow{0%,100%{box-shadow:0 0 6px rgba(255,55,70,.12),inset 0 0 5px rgba(255,55,70,.05)}50%{box-shadow:0 0 13px rgba(255,55,70,.32),inset 0 0 9px rgba(255,55,70,.12)}}
+.chatname .scam-badge{height:17px!important;min-width:46px!important;font-size:8px!important;letter-spacing:1.2px!important;margin-left:5px!important;vertical-align:-2px!important}
+.profile-name .scam-badge{height:19px!important;min-width:50px!important;font-size:9px!important}
+@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
 .profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
 .profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#2aabee;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #243541,0 12px 35px #0007;align-self:center}
@@ -1672,6 +1680,9 @@ function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img s
 function verifiedBadge(){
   return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
 }
+function scamBadge(){
+  return '<span class="scam-badge" title="Метка SCAM" aria-label="Метка SCAM">SCAM</span>';
+}
 function navChats(){closeChat();loadUsers();setNav(0);}
 function navContacts(){$('search').focus();$('search').value='';loadUsers();setNav(1);}
 function setNav(i){document.querySelectorAll('.bottom-nav button').forEach((b,n)=>b.classList.toggle('active',n===i));}
@@ -1688,7 +1699,7 @@ async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=await api('/api/me');normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
+ try{me=normalizeVerified(await api('/api/me'));normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -1742,7 +1753,9 @@ function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected
 
 function normalizeVerified(u){
   if(!u)return u;
-  u.verified=['rayf','monk','rayfgrambot'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
+  const username=String(u.username||'').replace(/^@/,'').toLowerCase();
+  u.verified=['rayf','monk','rayfgrambot'].includes(username);
+  u.scam=username==='trushny';
   return u;
 }
 function renderUsers(){
@@ -1750,7 +1763,7 @@ function renderUsers(){
    if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
  }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
@@ -1788,7 +1801,7 @@ function updateHeader(){
  if(!selected)return;
  const wrap=$('chatAvatarWrap');
  if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
- $('chatName').innerHTML=esc(selected.banned?'УДАЛЕННЫЙ АКАУНТ':(selected.display_name||selected.username))+' '+(selected.banned?'':(selected.verified?verifiedBadge():''));
+ $('chatName').innerHTML=esc(selected.banned?'УДАЛЕННЫЙ АКАУНТ':(selected.display_name||selected.username))+' '+(selected.banned?'':((selected.verified?verifiedBadge():'')+(selected.scam?scamBadge():'')));
  const status=$('chatStatus');
  const typing=typingUserId===selected.id;
  status.textContent = typing ? 'печатает..' : selected.online ? 'в сети' : 'был(а) недавно';
@@ -1929,10 +1942,11 @@ function openPublicProfile(username){
  api('/api/profile/'+encodeURIComponent(username)).then(u=>{
    normalizeVerified(u);
    const v=u.verified?verifiedBadge():'';
+   const scam=u.scam?scamBadge():'';
    openDrawer(`<div class="profile-page">
      <div class="profile-hero">
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
-       <div class="profile-name">${esc(u.display_name||u.username)} ${v}</div>
+       <div class="profile-name">${esc(u.display_name||u.username)} ${v}${scam}</div>
        <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
@@ -1984,11 +1998,12 @@ function closeDrawer(){
 }
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
+ const scam=me?.scam?scamBadge():'';
  const status=me?.online?'🟢 в сети':'⚪ офлайн';
  openDrawer(`<div class="profile-page">
    <div class="profile-hero">
      <div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div>
-     <div class="profile-name">${esc(me.display_name||me.username)} ${v}</div>
+     <div class="profile-name">${esc(me.display_name||me.username)} ${v}${scam}</div>
      <div class="profile-username">@${esc(me.username)}</div>
      <div class="profile-status">${status}</div>
    </div>
