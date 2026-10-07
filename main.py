@@ -59,6 +59,22 @@ class User(Base):
     stars: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Chat(Base):
+    __tablename__ = "chats"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user1_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user2_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class Block(Base):
+    __tablename__ = "blocks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    blocker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    blocked_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class Message(Base):
     __tablename__ = "messages"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -175,6 +191,37 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
+        await conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS chats (
+                id SERIAL PRIMARY KEY,
+                user1_id INTEGER NOT NULL REFERENCES users(id),
+                user2_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS blocks (
+                id SERIAL PRIMARY KEY,
+                blocker_id INTEGER NOT NULL REFERENCES users(id),
+                blocked_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.exec_driver_sql("""
+            INSERT INTO chats (user1_id, user2_id)
+            SELECT DISTINCT LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id)
+            FROM messages
+            WHERE sender_id <> receiver_id
+              AND NOT EXISTS (
+                SELECT 1 FROM chats c
+                WHERE c.user1_id = LEAST(messages.sender_id, messages.receiver_id)
+                  AND c.user2_id = GREATEST(messages.sender_id, messages.receiver_id)
+              )
+        """)
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user1_id ON chats(user1_id)")
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user2_id ON chats(user2_id)")
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
 
 
 @app.on_event("startup")
@@ -218,7 +265,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "online": online,
         "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
-        "verified": user.username.lower() == "rayf",
+        "verified": user.username.lower() in {"rayf", "monk", "rayfgrambot"},
         "twofa": bool(user.totp_enabled),
         "stars": int(user.stars or 0),
     }
@@ -255,6 +302,20 @@ async def send_ws(user_id: int, data: dict):
             await ws.send_text(json.dumps(data))
         except Exception:
             connections.pop(user_id, None)
+
+
+async def ensure_chat(db, a_id: int, b_id: int):
+    u1, u2 = sorted((int(a_id), int(b_id)))
+    chat = await db.scalar(select(Chat).where(Chat.user1_id == u1, Chat.user2_id == u2))
+    if not chat:
+        chat = Chat(user1_id=u1, user2_id=u2)
+        db.add(chat)
+        await db.flush()
+    return chat
+
+
+async def is_blocked(db, sender_id: int, receiver_id: int) -> bool:
+    return bool(await db.scalar(select(Block).where(Block.blocker_id == receiver_id, Block.blocked_id == sender_id)))
 
 
 @app.get("/api/rayfstar")
@@ -359,53 +420,108 @@ async def users(request: Request):
 
 @app.get("/api/chats")
 async def chats(request: Request):
-    """Return only users with whom the current account has message history.
-    A new account therefore starts with an empty chat list.
-    """
+    """Return persistent one-to-one chats. Clearing history does not remove the chat."""
     user = await current_user(request)
     async with SessionLocal() as db:
         result = await db.execute(
-            select(Message)
-            .where(or_(Message.sender_id == user.id, Message.receiver_id == user.id))
-            .order_by(Message.created_at.desc())
-            .limit(1000)
+            select(Chat).where(or_(Chat.user1_id == user.id, Chat.user2_id == user.id)).order_by(Chat.created_at.desc())
         )
-        rows = result.scalars().all()
-
-        # Keep the latest message per conversation.
-        latest = {}
-        for m in rows:
-            other_id = m.receiver_id if m.sender_id == user.id else m.sender_id
-            if other_id not in latest:
-                latest[other_id] = m
-
-        if not latest:
+        chat_rows = result.scalars().all()
+        if not chat_rows:
             return []
 
-        users_result = await db.execute(
-            select(User).where(User.id.in_(list(latest.keys())))
-        )
+        other_ids = [c.user2_id if c.user1_id == user.id else c.user1_id for c in chat_rows]
+        users_result = await db.execute(select(User).where(User.id.in_(other_ids)))
         by_id = {u.id: u for u in users_result.scalars().all()}
 
         items = []
-        for other_id, m in latest.items():
+        for c in chat_rows:
+            other_id = c.user2_id if c.user1_id == user.id else c.user1_id
             u = by_id.get(other_id)
             if not u:
                 continue
+            latest = await db.scalar(
+                select(Message)
+                .where(
+                    or_(
+                        and_(Message.sender_id == user.id, Message.receiver_id == other_id),
+                        and_(Message.sender_id == other_id, Message.receiver_id == user.id),
+                    )
+                )
+                .order_by(Message.created_at.desc())
+                .limit(1)
+            )
             item = user_public(u, u.id in connections)
-            item["last_message"] = "" if m.deleted else (m.text or ("📎 " + (m.file_name or "Файл")))
-            item["last_message_at"] = m.created_at.isoformat()
+            item["last_message"] = "" if not latest else ("" if latest.deleted else (latest.text or ("📎 " + (latest.file_name or "Файл"))))
+            item["last_message_at"] = latest.created_at.isoformat() if latest else c.created_at.isoformat()
             item["unread"] = 0
+            item["blocked"] = bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))
             items.append(item)
 
         items.sort(key=lambda x: x["last_message_at"], reverse=True)
         return items
 
 
+@app.post("/api/chats/{other_id}/clear")
+async def clear_chat(other_id: int, user: User = Depends(current_user)):
+    if other_id == user.id:
+        raise HTTPException(400, "Нельзя очистить чат с самим собой")
+    async with SessionLocal() as db:
+        chat = await db.scalar(select(Chat).where(or_(and_(Chat.user1_id == user.id, Chat.user2_id == other_id), and_(Chat.user1_id == other_id, Chat.user2_id == user.id))))
+        if not chat:
+            raise HTTPException(404, "Чат не найден")
+        await db.execute(Message.__table__.delete().where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))))
+        await db.commit()
+        return {"ok": True}
+
+
+@app.delete("/api/chats/{other_id}")
+async def delete_chat(other_id: int, user: User = Depends(current_user)):
+    if other_id == user.id:
+        raise HTTPException(400, "Нельзя удалить чат с самим собой")
+    async with SessionLocal() as db:
+        await db.execute(Message.__table__.delete().where(or_(and_(Message.sender_id == user.id, Message.receiver_id == other_id), and_(Message.sender_id == other_id, Message.receiver_id == user.id))))
+        await db.execute(Chat.__table__.delete().where(or_(and_(Chat.user1_id == user.id, Chat.user2_id == other_id), and_(Chat.user1_id == other_id, Chat.user2_id == user.id))))
+        await db.commit()
+        return {"ok": True}
+
+
+@app.post("/api/chats/{other_id}/block")
+async def block_user(other_id: int, user: User = Depends(current_user)):
+    if other_id == user.id:
+        raise HTTPException(400, "Нельзя заблокировать себя")
+    async with SessionLocal() as db:
+        target = await db.get(User, other_id)
+        if not target:
+            raise HTTPException(404, "Пользователь не найден")
+        exists = await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id))
+        if not exists:
+            db.add(Block(blocker_id=user.id, blocked_id=other_id))
+            await db.commit()
+        return {"ok": True, "blocked": True}
+
+
+@app.delete("/api/chats/{other_id}/block")
+async def unblock_user(other_id: int, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        await db.execute(Block.__table__.delete().where(Block.blocker_id == user.id, Block.blocked_id == other_id))
+        await db.commit()
+        return {"ok": True, "blocked": False}
+
+
+@app.get("/api/chats/{other_id}/block")
+async def block_status(other_id: int, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        return {"blocked": bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))}
+
+
 @app.get("/api/messages/{other_id}")
 async def messages(other_id: int, request: Request):
     user = await current_user(request)
     async with SessionLocal() as db:
+        if other_id != user.id:
+            await ensure_chat(db, user.id, other_id)
+            await db.commit()
         result = await db.execute(
             select(Message)
             .where(
@@ -736,6 +852,10 @@ async def websocket_endpoint(ws: WebSocket):
                     receiver = await db.get(User, receiver_id)
                     if not receiver:
                         continue
+                    if await is_blocked(db, uid, receiver_id):
+                        await send_ws(uid, {"type": "error", "message": "Пользователь заблокировал вам сообщения"})
+                        continue
+                    await ensure_chat(db, uid, receiver_id)
                     m = Message(
                         sender_id=uid,
                         receiver_id=receiver_id,
@@ -954,6 +1074,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  flex:none;
 }
 .chathead .chat-menu:active{transform:scale(.9)}
+.chat-menu + .chat-menu-panel{}
+
 .chathead .verified-badge{vertical-align:middle;margin-left:3px}
 .chathead .dot{display:none}
 @media(max-width:700px){
@@ -1377,6 +1499,7 @@ function connect(){
 function handleWS(d){
  if(d.type==='call_offer'||d.type==='call_answer'||d.type==='call_ice'){handleCall(d);return}
  if(d.type==='group_message'||d.type==='channel_message'){if(communityType&&((d.type==='group_message'&&communityType==='group'&&d.message.group_id===communityId)||(d.type==='channel_message'&&communityType==='channel'&&d.message.channel_id===communityId))){renderCommunityMessage(d.message);scrollBottom()}return}
+ if(d.type==='error'){showToast(d.message||'Ошибка');return}
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
  if(d.type==='read'){updateMessageRead(d.message_id)}
  if(d.type==='message_update'){if(selected && (d.message.sender_id===selected.id||d.message.receiver_id===selected.id))renderMessage(d.message,false);loadUsers()}
@@ -1409,12 +1532,12 @@ function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected
 
 function normalizeVerified(u){
   if(!u)return u;
-  u.verified=['rayf','monk'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
+  u.verified=['rayf','monk','rayfgrambot'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
   return u;
 }
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
  try{
@@ -1460,9 +1583,50 @@ function updateHeader(){
 function showChatMenu(e){
  e?.stopPropagation();
  if(!selected)return;
- openDrawer(`<h2>⋮ ${esc(selected.display_name||selected.username)}</h2>
+ const name=esc(selected.display_name||selected.username);
+ openDrawer(`<h2>⋮ ${name}</h2>
    <button class="save" onclick="openPublicProfile('${esc(selected.username)}');closeDrawer()">👤 Открыть профиль</button>
+   <button class="save" style="margin-top:8px" onclick="clearChat()">🗑️ Очистить историю</button>
+   <button class="save" style="margin-top:8px" onclick="deleteChat()">❌ Удалить чат</button>
+   <button class="save" style="margin-top:8px" onclick="blockChatUser()">🚫 Заблокировать</button>
    <button class="save" style="margin-top:8px" onclick="toggleSecret();closeDrawer()">🔒 Секретный режим</button>`);
+}
+async function clearChat(){
+ if(!selected)return;
+ if(!confirm('Очистить историю? Все сообщения в этом чате будут удалены, но сам чат останется.'))return;
+ const id=selected.id;
+ try{
+   await api('/api/chats/'+id+'/clear',{method:'POST'});
+   $('messages').innerHTML='<div style="text-align:center;color:#718694;margin-top:30vh">История очищена</div>';
+   closeDrawer();
+   await loadUsers();
+   selected=users.find(u=>u.id===id)||selected;
+   updateHeader();
+   renderUsers();
+   showToast('История чата очищена');
+ }catch(e){showToast(e.message)}
+}
+async function deleteChat(){
+ if(!selected)return;
+ if(!confirm('Удалить чат полностью? История сообщений и чат будут удалены.'))return;
+ const id=selected.id;
+ try{
+   await api('/api/chats/'+id,{method:'DELETE'});
+   closeDrawer();
+   closeChat();
+   await loadUsers();
+   showToast('Чат удалён');
+ }catch(e){showToast(e.message)}
+}
+async function blockChatUser(){
+ if(!selected)return;
+ if(!confirm('Заблокировать пользователя? Он больше не сможет отправлять тебе сообщения.'))return;
+ const id=selected.id;
+ try{
+   await api('/api/chats/'+id+'/block',{method:'POST'});
+   closeDrawer();
+   showToast('Пользователь заблокирован');
+ }catch(e){showToast(e.message)}
 }
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
