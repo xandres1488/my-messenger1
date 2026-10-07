@@ -1,339 +1,729 @@
 import os
 import asyncio
-from datetime import datetime, timezone
-from typing import Optional
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
+from datetime import datetime, timezone, timedelta
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import String, Text, DateTime, ForeignKey, select, or_, and_, UniqueConstraint
+from sqlalchemy import String, Text, DateTime, ForeignKey, select, or_, and_, text as sql_text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from pwdlib import PasswordHash
 import jwt
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./rayfgram.db")
+# ============================================================
+# RayfGram v10 — stable login + private messages
+# IMPORTANT: this version intentionally uses HTTP for messages.
+# HTTP persistence is the source of truth; polling keeps chats fresh.
+# ============================================================
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is missing in Render Environment")
+
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
-ALGORITHM = "HS256"
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is missing in Render Environment")
 
-# For SQLite local testing; Render PostgreSQL works through DATABASE_URL.
-engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+ALGORITHM = "HS256"
+TOKEN_DAYS = 30
+
+engine = create_async_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={"command_timeout": 15},
+)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 password_hash = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
 
-app = FastAPI(title="RayfGram Messenger")
+app = FastAPI(title="RayfGram Stable Messenger")
+
 
 class Base(DeclarativeBase):
     pass
 
+
 class User(Base):
     __tablename__ = "users"
+
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    password: Mapped[str] = mapped_column(String(255))
-    display_name: Mapped[str] = mapped_column(String(100), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(80), default="")
+    bio: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
 
 class Message(Base):
     __tablename__ = "messages"
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     receiver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    text: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
 
 class RegisterIn(BaseModel):
     username: str
     password: str
     display_name: str = ""
 
+
 class LoginIn(BaseModel):
     username: str
     password: str
+
 
 class SendIn(BaseModel):
     receiver_id: int
     text: str
 
+
 async def db():
     async with SessionLocal() as session:
         yield session
 
-def make_token(user_id: int) -> str:
-    return jwt.encode({"sub": str(user_id)}, SECRET_KEY, algorithm=ALGORITHM)
 
-async def current_user(
+def normalize_username(value: str) -> str:
+    return value.strip().lstrip("@").strip().lower()
+
+
+def make_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=TOKEN_DAYS)).timestamp()),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     session: AsyncSession = Depends(db),
 ) -> User:
     if not credentials:
-        raise HTTPException(status_code=401, detail="Необходим вход")
+        raise HTTPException(401, "Войдите в аккаунт")
+
     try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        uid = int(payload["sub"])
+        payload = jwt.decode(
+            credentials.credentials,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+        user_id = int(payload["sub"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Сессия истекла. Войдите снова")
     except Exception:
-        raise HTTPException(status_code=401, detail="Неверный токен")
-    user = await session.get(User, uid)
+        raise HTTPException(401, "Сессия недействительна. Войдите снова")
+
+    user = await session.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=401, detail="Пользователь не найден")
+        raise HTTPException(401, "Пользователь не найден")
     return user
 
-async def message_json(m: Message, session: AsyncSession):
-    sender = await session.get(User, m.sender_id)
-    receiver = await session.get(User, m.receiver_id)
-    return {
-        "id": m.id,
-        "sender_id": m.sender_id,
-        "sender_username": sender.username if sender else "",
-        "sender_name": sender.display_name if sender else "",
-        "receiver_id": m.receiver_id,
-        "receiver_username": receiver.username if receiver else "",
-        "receiver_name": receiver.display_name if receiver else "",
-        "text": m.text,
-        "created_at": m.created_at.isoformat(),
-    }
 
-@app.on_event("startup")
-async def startup():
+async def ensure_database():
+    """
+    Keeps the current Render database compatible with this stable build.
+    Older RayfGram builds used either `password` or `password_hash`.
+    We preserve existing users instead of forcing a new database.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+        # PostgreSQL compatibility migration.
+        if engine.url.get_backend_name() == "postgresql":
+            result = await conn.execute(sql_text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='users'
+            """))
+            columns = {row[0] for row in result.fetchall()}
+
+            if "password_hash" not in columns:
+                await conn.execute(sql_text(
+                    'ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)'
+                ))
+                if "password" in columns:
+                    await conn.execute(sql_text(
+                        'UPDATE users SET password_hash = password '
+                        'WHERE password_hash IS NULL'
+                    ))
+
+            if "display_name" not in columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE users ADD COLUMN display_name VARCHAR(80) DEFAULT ''"
+                ))
+
+            if "bio" not in columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE users ADD COLUMN bio VARCHAR(160) DEFAULT ''"
+                ))
+
+            if "created_at" not in columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE users ADD COLUMN created_at TIMESTAMPTZ"
+                ))
+                await conn.execute(sql_text(
+                    "UPDATE users SET created_at = NOW() WHERE created_at IS NULL"
+                ))
+
+            result = await conn.execute(sql_text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='messages'
+            """))
+            msg_columns = {row[0] for row in result.fetchall()}
+
+            if "sender_id" not in msg_columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE messages ADD COLUMN sender_id INTEGER"
+                ))
+            if "receiver_id" not in msg_columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE messages ADD COLUMN receiver_id INTEGER"
+                ))
+            if "text" not in msg_columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE messages ADD COLUMN text TEXT DEFAULT ''"
+                ))
+            if "created_at" not in msg_columns:
+                await conn.execute(sql_text(
+                    "ALTER TABLE messages ADD COLUMN created_at TIMESTAMPTZ"
+                ))
+                await conn.execute(sql_text(
+                    "UPDATE messages SET created_at = NOW() WHERE created_at IS NULL"
+                ))
+
+
+@app.on_event("startup")
+async def startup():
+    await ensure_database()
+
+
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(sql_text("SELECT 1"))
+        return {"ok": True, "database": True}
+    except Exception as e:
+        return {"ok": False, "database": False, "error": str(e)}
+
 
 @app.post("/api/register")
 async def register(data: RegisterIn, session: AsyncSession = Depends(db)):
-    username = data.username.strip().lstrip("@").lower()
+    username = normalize_username(data.username)
+
     if len(username) < 3 or len(username) > 50:
-        raise HTTPException(400, "Username должен быть от 3 до 50 символов")
+        raise HTTPException(400, "Username: от 3 до 50 символов")
+
+    if not username.replace("_", "").isalnum():
+        raise HTTPException(400, "Username может содержать буквы, цифры и _")
+
     if len(data.password) < 6:
-        raise HTTPException(400, "Пароль минимум 6 символов")
-    exists = await session.scalar(select(User).where(User.username == username))
+        raise HTTPException(400, "Пароль должен быть минимум 6 символов")
+
+    exists = await session.scalar(
+        select(User).where(User.username == username)
+    )
     if exists:
-        raise HTTPException(409, "Такой username уже занят")
+        raise HTTPException(409, "Такой username уже существует")
+
     user = User(
         username=username,
-        password=password_hash.hash(data.password),
-        display_name=data.display_name.strip() or username,
+        password_hash=password_hash.hash(data.password),
+        display_name=data.display_name.strip()[:80] or username,
+        bio="",
     )
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    return {"token": make_token(user.id), "user": {"id": user.id, "username": user.username, "display_name": user.display_name}}
+
+    return {
+        "token": make_token(user.id),
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name or user.username,
+        },
+    }
+
 
 @app.post("/api/login")
 async def login(data: LoginIn, session: AsyncSession = Depends(db)):
-    username = data.username.strip().lstrip("@").lower()
-    user = await session.scalar(select(User).where(User.username == username))
-    if not user or not password_hash.verify(data.password, user.password):
+    username = normalize_username(data.username)
+
+    user = await session.scalar(
+        select(User).where(User.username == username)
+    )
+
+    if not user:
         raise HTTPException(401, "Неверный username или пароль")
-    return {"token": make_token(user.id), "user": {"id": user.id, "username": user.username, "display_name": user.display_name}}
+
+    try:
+        valid = password_hash.verify(data.password, user.password_hash)
+    except Exception:
+        valid = False
+
+    if not valid:
+        raise HTTPException(401, "Неверный username или пароль")
+
+    return {
+        "token": make_token(user.id),
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name or user.username,
+        },
+    }
+
 
 @app.get("/api/me")
-async def me(user: User = Depends(current_user)):
-    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+async def me(user: User = Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name or user.username,
+        "bio": user.bio or "",
+    }
+
 
 @app.get("/api/users")
-async def users(session: AsyncSession = Depends(db), user: User = Depends(current_user)):
-    rows = (await session.scalars(select(User).where(User.id != user.id).order_by(User.username))).all()
-    return [{"id": u.id, "username": u.username, "display_name": u.display_name} for u in rows]
+async def users(
+    session: AsyncSession = Depends(db),
+    user: User = Depends(get_current_user),
+):
+    rows = (
+        await session.scalars(
+            select(User)
+            .where(User.id != user.id)
+            .order_by(User.username.asc())
+        )
+    ).all()
+
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "display_name": u.display_name or u.username,
+        }
+        for u in rows
+    ]
+
+
+async def serialize_message(message: Message, session: AsyncSession):
+    sender = await session.get(User, message.sender_id)
+    receiver = await session.get(User, message.receiver_id)
+
+    return {
+        "id": message.id,
+        "sender_id": message.sender_id,
+        "sender_username": sender.username if sender else "",
+        "sender_name": (sender.display_name or sender.username) if sender else "",
+        "receiver_id": message.receiver_id,
+        "receiver_username": receiver.username if receiver else "",
+        "receiver_name": (receiver.display_name or receiver.username) if receiver else "",
+        "text": message.text,
+        "created_at": message.created_at.isoformat() if message.created_at else "",
+    }
+
 
 @app.get("/api/messages/{other_id}")
-async def get_messages(other_id: int, after_id: int = 0, session: AsyncSession = Depends(db), user: User = Depends(current_user)):
+async def get_messages(
+    other_id: int,
+    after_id: int = 0,
+    session: AsyncSession = Depends(db),
+    user: User = Depends(get_current_user),
+):
     other = await session.get(User, other_id)
     if not other:
         raise HTTPException(404, "Пользователь не найден")
-    q = select(Message).where(
-        or_(
-            and_(Message.sender_id == user.id, Message.receiver_id == other_id),
-            and_(Message.sender_id == other_id, Message.receiver_id == user.id),
-        ),
-        Message.id > after_id,
-    ).order_by(Message.id.asc()).limit(200)
-    rows = (await session.scalars(q)).all()
-    return [await message_json(m, session) for m in rows]
 
-class ConnectionManager:
-    def __init__(self):
-        self.connections: dict[int, set[WebSocket]] = {}
-        self.lock = asyncio.Lock()
+    query = (
+        select(Message)
+        .where(
+            Message.id > after_id,
+            or_(
+                and_(
+                    Message.sender_id == user.id,
+                    Message.receiver_id == other_id,
+                ),
+                and_(
+                    Message.sender_id == other_id,
+                    Message.receiver_id == user.id,
+                ),
+            ),
+        )
+        .order_by(Message.id.asc())
+        .limit(300)
+    )
 
-    async def connect(self, uid: int, ws: WebSocket):
-        await ws.accept()
-        async with self.lock:
-            self.connections.setdefault(uid, set()).add(ws)
+    rows = (await session.scalars(query)).all()
+    return [await serialize_message(m, session) for m in rows]
 
-    async def disconnect(self, uid: int, ws: WebSocket):
-        async with self.lock:
-            group = self.connections.get(uid)
-            if group:
-                group.discard(ws)
-                if not group:
-                    self.connections.pop(uid, None)
-
-    async def send_to_user(self, uid: int, data: dict):
-        async with self.lock:
-            sockets = list(self.connections.get(uid, set()))
-        dead = []
-        for ws in sockets:
-            try:
-                await ws.send_json(data)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            await self.disconnect(uid, ws)
-
-manager = ConnectionManager()
 
 @app.post("/api/messages")
-async def send_message(data: SendIn, session: AsyncSession = Depends(db), user: User = Depends(current_user)):
-    text = data.text.strip()
-    if not text:
-        raise HTTPException(400, "Пустое сообщение")
-    if len(text) > 10000:
-        raise HTTPException(400, "Сообщение слишком длинное")
+async def send_message(
+    data: SendIn,
+    session: AsyncSession = Depends(db),
+    user: User = Depends(get_current_user),
+):
     receiver = await session.get(User, data.receiver_id)
+
     if not receiver:
         raise HTTPException(404, "Получатель не найден")
+
+    message_text = data.text.strip()
+
+    if not message_text:
+        raise HTTPException(400, "Нельзя отправить пустое сообщение")
+
+    if len(message_text) > 10000:
+        raise HTTPException(400, "Сообщение слишком длинное")
+
     if receiver.id == user.id:
         raise HTTPException(400, "Нельзя отправить сообщение самому себе")
 
-    msg = Message(sender_id=user.id, receiver_id=receiver.id, text=text)
-    session.add(msg)
+    message = Message(
+        sender_id=user.id,
+        receiver_id=receiver.id,
+        text=message_text,
+    )
+
+    session.add(message)
+
+    # COMMIT happens BEFORE response.
+    # Therefore a successful HTTP response means the message is in PostgreSQL.
     await session.commit()
-    await session.refresh(msg)
-    payload = await message_json(msg, session)
+    await session.refresh(message)
 
-    # Send to all active connections of the receiver and sender.
-    await manager.send_to_user(receiver.id, {"type": "message", "message": payload})
-    await manager.send_to_user(user.id, {"type": "message", "message": payload})
-    return payload
+    return await serialize_message(message, session)
 
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    token = ws.query_params.get("token")
-    if not token:
-        await ws.close(code=1008)
-        return
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        uid = int(payload["sub"])
-    except Exception:
-        await ws.close(code=1008)
-        return
 
-    await manager.connect(uid, ws)
-    try:
-        while True:
-            # Keep the connection alive. Client can send ping.
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        await manager.disconnect(uid, ws)
-    except Exception:
-        await manager.disconnect(uid, ws)
+# ------------------------------------------------------------
+# Stable frontend
+# No WebSocket dependency. Messages are stored through HTTP
+# and the open chat polls the server every 1.2 seconds.
+# ------------------------------------------------------------
 
-HTML = r"""<!doctype html>
+HTML = r"""
+<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>RayfGram</title>
 <style>
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#101318;color:#fff}
-.wrap{max-width:900px;margin:auto;height:100vh;display:flex;background:#151a21}
-.sidebar{width:290px;border-right:1px solid #29303a;padding:14px;overflow:auto}.chat{flex:1;display:flex;flex-direction:column}
-h2{margin:4px 0 14px}.user{padding:12px;border-radius:12px;margin:4px 0;background:#1c222b;cursor:pointer}.user:hover{background:#252d38}
-.head{padding:14px 18px;border-bottom:1px solid #29303a;font-weight:700}.msgs{flex:1;overflow:auto;padding:18px}
-.msg{max-width:72%;padding:9px 12px;margin:7px 0;border-radius:14px;background:#252c36}.mine{margin-left:auto;background:#245b9e}
-.name{font-size:12px;opacity:.7;margin-bottom:3px}.composer{display:flex;padding:12px;border-top:1px solid #29303a;gap:8px}.composer input{flex:1;padding:12px;border:0;border-radius:12px;background:#202631;color:#fff}.composer button{border:0;border-radius:12px;padding:0 18px;background:#3487e8;color:#fff}
-.auth{max-width:380px;margin:80px auto;padding:25px;background:#1a2028;border-radius:18px}.auth input,.auth button{width:100%;padding:13px;margin:6px 0;border-radius:10px;border:0}.auth button{background:#3487e8;color:white}
-@media(max-width:650px){.sidebar{width:105px}.sidebar .title{font-size:13px}.user{font-size:12px}.wrap{width:100%}}
+*{box-sizing:border-box}
+body{margin:0;background:#0e1621;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+button,input{font:inherit}
+#app{min-height:100vh}
+.auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.authbox{width:100%;max-width:390px;background:#17212b;border-radius:22px;padding:26px;box-shadow:0 20px 60px #0005}
+.logo{font-size:30px;font-weight:800;margin-bottom:5px}
+.sub{color:#94a3b8;margin-bottom:20px}
+.auth input{width:100%;margin:7px 0;padding:14px;border:1px solid #293747;background:#0f1720;color:#fff;border-radius:12px;outline:none}
+.auth input:focus{border-color:#3b9cff}
+.primary{width:100%;padding:14px;margin-top:8px;border:0;border-radius:12px;background:#2481cc;color:white;font-weight:700;cursor:pointer}
+.secondary{width:100%;padding:12px;margin-top:8px;border:0;border-radius:12px;background:#243342;color:#dbeafe;cursor:pointer}
+.error{min-height:24px;color:#ff8b8b;margin-top:10px;font-size:14px}
+.app{height:100vh;max-width:1000px;margin:auto;background:#17212b;display:flex;overflow:hidden}
+.sidebar{width:310px;border-right:1px solid #263746;display:flex;flex-direction:column}
+.top{padding:17px;border-bottom:1px solid #263746}
+.top b{font-size:22px}
+.me{color:#94a3b8;font-size:13px;margin-top:3px}
+.users{overflow:auto;padding:8px}
+.person{padding:13px;border-radius:14px;cursor:pointer;margin:3px 0;transition:.15s;background:#1a2632}
+.person:hover{background:#223446}
+.person.active{background:#2481cc}
+.person b{display:block}
+.person span{font-size:13px;color:#a9bacb}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+.chathead{height:68px;border-bottom:1px solid #263746;padding:10px 16px;display:flex;align-items:center;cursor:pointer}
+.avatar{width:44px;height:44px;border-radius:50%;background:#2481cc;display:flex;align-items:center;justify-content:center;font-weight:800;margin-right:11px}
+.chatname{font-weight:750}
+.chatuser{font-size:12px;color:#a9bacb}
+.messages{flex:1;overflow:auto;padding:18px}
+.empty{text-align:center;color:#8294a6;margin-top:25vh}
+.msg{max-width:min(75%,500px);width:max-content;padding:9px 12px;margin:7px 0;border-radius:15px;background:#263442;word-break:break-word}
+.msg.mine{margin-left:auto;background:#2b75b5}
+.msgtime{font-size:10px;color:#b9c9d8;margin-top:4px;text-align:right}
+.composer{padding:11px;border-top:1px solid #263746;display:flex;gap:8px}
+.composer input{flex:1;min-width:0;border:0;outline:none;border-radius:14px;padding:13px;background:#101922;color:white}
+.send{border:0;border-radius:14px;padding:0 18px;background:#2481cc;color:white;font-size:20px;cursor:pointer}
+.status{font-size:12px;color:#7f95a9;padding:0 15px 5px}
+@media(max-width:700px){
+ .sidebar{width:115px}
+ .top{padding:12px 8px}.top b{font-size:17px}.me{font-size:10px}
+ .person{padding:10px 7px}.person b{font-size:12px}.person span{font-size:10px}
+ .msg{max-width:86%}
+}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
-let token=localStorage.getItem("rayf_token"), me=null, active=null, ws=null, lastId=0, poll=null;
+const KEY="rayfgram_token_v10";
+let token=localStorage.getItem(KEY)||"";
+let me=null;
+let active=null;
+let lastId=0;
+let pollTimer=null;
+let loading=false;
 
 const app=document.getElementById("app");
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 
-function auth(){
- app.innerHTML=`<div class="auth"><h2>RayfGram</h2>
- <input id="u" placeholder="username"><input id="p" type="password" placeholder="пароль">
- <button onclick="login()">Войти</button><button onclick="register()">Создать аккаунт</button>
- <div id="err"></div></div>`;
+function esc(v){
+ return String(v??"").replace(/[&<>"']/g,c=>({
+  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+ }[c]));
 }
-async function api(url,opt={}){
- opt.headers=Object.assign({"Content-Type":"application/json"},opt.headers||{});
- if(token) opt.headers.Authorization="Bearer "+token;
- const r=await fetch(url,opt), data=await r.json().catch(()=>({}));
- if(!r.ok) throw Error(data.detail||"Ошибка");
+
+async function api(url, options={}){
+ const headers=Object.assign({},options.headers||{});
+ headers["Content-Type"]="application/json";
+ if(token) headers["Authorization"]="Bearer "+token;
+
+ const response=await fetch(url,{...options,headers});
+ const data=await response.json().catch(()=>({}));
+
+ if(response.status===401){
+   token="";
+   localStorage.removeItem(KEY);
+   showAuth("Сессия закончилась. Войдите снова.");
+   throw new Error("Сессия закончилась");
+ }
+ if(!response.ok) throw new Error(data.detail||"Ошибка сервера");
  return data;
 }
-async function login(){
- try{let d=await api("/api/login",{method:"POST",body:JSON.stringify({username:u.value,password:p.value})});token=d.token;localStorage.setItem("rayf_token",token);start();}
- catch(e){err.textContent=e.message}
+
+function showAuth(message=""){
+ clearInterval(pollTimer);
+ app.innerHTML=`
+ <div class="auth"><div class="authbox">
+   <div class="logo">RayfGram</div>
+   <div class="sub">Надёжный вход и личные сообщения</div>
+   <input id="loginUser" autocomplete="username" placeholder="Username">
+   <input id="loginPass" type="password" autocomplete="current-password" placeholder="Пароль">
+   <button class="primary" onclick="doLogin()">Войти</button>
+   <button class="secondary" onclick="doRegister()">Создать аккаунт</button>
+   <div class="error" id="authError">${esc(message)}</div>
+ </div></div>`;
 }
-async function register(){
- try{let d=await api("/api/register",{method:"POST",body:JSON.stringify({username:u.value,password:p.value,display_name:u.value})});token=d.token;localStorage.setItem("rayf_token",token);start();}
- catch(e){err.textContent=e.message}
-}
-async function start(){
- try{me=await api("/api/me");render();connectWS();}catch(e){localStorage.removeItem("rayf_token");token=null;auth();}
-}
-function render(){
- app.innerHTML=`<div class="wrap"><aside class="sidebar"><div class="title"><h2>RayfGram</h2></div><div id="users"></div></aside>
- <main class="chat"><div class="head" id="head">Выберите чат</div><div class="msgs" id="msgs"></div>
- <div class="composer"><input id="text" placeholder="Сообщение..." onkeydown="if(event.key==='Enter')send()"><button onclick="send()">➤</button></div></main></div>`;
- loadUsers();
-}
-async function loadUsers(){
- let list=await api("/api/users");users.innerHTML=list.map(u=>`<div class="user" onclick="openChat(${u.id},'${esc(u.username)}')"><b>${esc(u.display_name||u.username)}</b><br><small>@${esc(u.username)}</small></div>`).join("");
-}
-async function openChat(id,username){
- active={id,username};lastId=0;head.textContent=username;msgs.innerHTML="";
- await loadMessages(); startPolling();
-}
-async function loadMessages(){
- if(!active)return;
+
+async function doLogin(){
+ const error=document.getElementById("authError");
+ error.textContent="Входим...";
  try{
-  let rows=await api("/api/messages/"+active.id+"?after_id="+lastId);
-  for(const m of rows){if(m.id<=lastId)continue;append(m);lastId=m.id;}
- }catch(e){}
+   const data=await api("/api/login",{
+     method:"POST",
+     body:JSON.stringify({
+       username:document.getElementById("loginUser").value,
+       password:document.getElementById("loginPass").value
+     })
+   });
+   token=data.token;
+   localStorage.setItem(KEY,token);
+   await startApp();
+ }catch(e){error.textContent=e.message}
 }
-function append(m){
- if(!active || (m.sender_id!==active.id && m.receiver_id!==active.id))return;
- const div=document.createElement("div");div.className="msg "+(m.sender_id===me.id?"mine":"");
- div.innerHTML=`<div class="name">${esc(m.sender_name||m.sender_username)}</div>${esc(m.text)}`;
- msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
+
+async function doRegister(){
+ const error=document.getElementById("authError");
+ const username=document.getElementById("loginUser").value.trim();
+ const password=document.getElementById("loginPass").value;
+ if(!username||!password){error.textContent="Введите username и пароль";return}
+ try{
+   const data=await api("/api/register",{
+     method:"POST",
+     body:JSON.stringify({
+       username,
+       password,
+       display_name:username
+     })
+   });
+   token=data.token;
+   localStorage.setItem(KEY,token);
+   await startApp();
+ }catch(e){error.textContent=e.message}
 }
-async function send(){
+
+async function startApp(){
+ try{
+   me=await api("/api/me");
+   renderApp();
+   await loadUsers();
+   startPolling();
+ }catch(e){
+   token="";
+   localStorage.removeItem(KEY);
+   showAuth("Не удалось восстановить вход. Войдите снова.");
+ }
+}
+
+function renderApp(){
+ app.innerHTML=`
+ <div class="app">
+   <aside class="sidebar">
+     <div class="top">
+       <b>RayfGram</b>
+       <div class="me">@${esc(me.username)}</div>
+     </div>
+     <div class="users" id="users"></div>
+   </aside>
+   <main class="chat">
+     <div class="chathead" id="chatHead">
+       <div class="avatar">R</div>
+       <div><div class="chatname">Выберите чат</div><div class="chatuser">Выберите пользователя слева</div></div>
+     </div>
+     <div class="messages" id="messages"><div class="empty">Выберите пользователя, чтобы начать переписку</div></div>
+     <div class="status" id="status"></div>
+     <div class="composer">
+       <input id="messageInput" placeholder="Сообщение..." disabled
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}">
+       <button class="send" onclick="sendMessage()">➤</button>
+     </div>
+   </main>
+ </div>`;
+}
+
+async function loadUsers(){
+ const list=await api("/api/users");
+ const box=document.getElementById("users");
+ box.innerHTML=list.map(u=>`
+   <div class="person ${active&&active.id===u.id?"active":""}" onclick="openChat(${u.id},'${esc(u.username)}','${esc(u.display_name||u.username)}')">
+     <b>${esc(u.display_name||u.username)}</b>
+     <span>@${esc(u.username)}</span>
+   </div>`).join("");
+}
+
+async function openChat(id,username,displayName){
+ active={id,username,displayName};
+ lastId=0;
+ document.getElementById("chatHead").innerHTML=`
+   <div class="avatar">${esc((displayName||username).slice(0,1).toUpperCase())}</div>
+   <div><div class="chatname">${esc(displayName||username)}</div><div class="chatuser">@${esc(username)}</div></div>`;
+ document.getElementById("messages").innerHTML="";
+ document.getElementById("messageInput").disabled=false;
+ await loadMessages(true);
+ await loadUsers();
+ document.getElementById("messageInput").focus();
+}
+
+async function loadMessages(initial=false){
+ if(!active||loading)return;
+ loading=true;
+ try{
+   const rows=await api("/api/messages/"+active.id+"?after_id="+lastId);
+   for(const message of rows){
+     if(message.id<=lastId)continue;
+     // The active chat is checked again because the user may switch chats
+     // while the request was in flight.
+     if(!active)break;
+     appendMessage(message);
+     lastId=message.id;
+   }
+   if(initial){
+     const box=document.getElementById("messages");
+     box.scrollTop=box.scrollHeight;
+   }
+ }catch(e){
+   if(e.message!=="Сессия закончилась"){
+     document.getElementById("status").textContent="Нет связи с сервером — повторяем...";
+   }
+ }finally{
+   loading=false;
+ }
+}
+
+function appendMessage(m){
  if(!active)return;
- const input=document.getElementById("text"), value=input.value.trim();if(!value)return;
- input.value="";
- try{let m=await api("/api/messages",{method:"POST",body:JSON.stringify({receiver_id:active.id,text:value})});if(m.id>lastId){append(m);lastId=m.id;}}
- catch(e){alert(e.message);input.value=value}
+ const belongs=(m.sender_id===me.id&&m.receiver_id===active.id)||
+               (m.sender_id===active.id&&m.receiver_id===me.id);
+ if(!belongs)return;
+
+ const box=document.getElementById("messages");
+ const empty=box.querySelector(".empty");
+ if(empty)empty.remove();
+
+ if(box.querySelector(`[data-message-id="${m.id}"]`))return;
+
+ const div=document.createElement("div");
+ div.className="msg "+(m.sender_id===me.id?"mine":"");
+ div.dataset.messageId=m.id;
+
+ const date=m.created_at?new Date(m.created_at).toLocaleTimeString([],{
+   hour:"2-digit",minute:"2-digit"
+ }):"";
+
+ div.innerHTML=`<div>${esc(m.text)}</div><div class="msgtime">${date}</div>`;
+ box.appendChild(div);
+ box.scrollTop=box.scrollHeight;
 }
-function connectWS(){
- if(ws && (ws.readyState===0||ws.readyState===1))return;
- ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws?token="+encodeURIComponent(token));
- ws.onmessage=e=>{let d=JSON.parse(e.data);if(d.type==="message"){let m=d.message;if(active && ((m.sender_id===me.id&&m.receiver_id===active.id)||(m.sender_id===active.id&&m.receiver_id===me.id)) && m.id>lastId){append(m);lastId=m.id;} loadUsers();}};
- ws.onclose=()=>setTimeout(connectWS,1500);
- ws.onerror=()=>{try{ws.close()}catch{}};
+
+async function sendMessage(){
+ if(!active)return;
+
+ const input=document.getElementById("messageInput");
+ const text=input.value.trim();
+ if(!text)return;
+
+ input.disabled=true;
+
+ try{
+   const message=await api("/api/messages",{
+     method:"POST",
+     body:JSON.stringify({
+       receiver_id:active.id,
+       text
+     })
+   });
+
+   // Server has committed it before returning.
+   appendMessage(message);
+   lastId=Math.max(lastId,message.id);
+   input.value="";
+   document.getElementById("status").textContent="Доставлено на сервер";
+ }catch(e){
+   document.getElementById("status").textContent="Не отправлено: "+e.message;
+ }finally{
+   input.disabled=false;
+   input.focus();
+ }
 }
-function startPolling(){clearInterval(poll);poll=setInterval(()=>{loadMessages();if(!ws||ws.readyState!==1)connectWS()},1800)}
-if(token)start();else auth();
+
+function startPolling(){
+ clearInterval(pollTimer);
+ pollTimer=setInterval(()=>{
+   if(active)loadMessages(false);
+ },1200);
+}
+
+window.addEventListener("beforeunload",()=>clearInterval(pollTimer));
+
+if(token)startApp();else showAuth();
 </script>
-</body></html>"""
+</body>
+</html>
+"""
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
