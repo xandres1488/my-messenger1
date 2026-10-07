@@ -215,7 +215,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "online": online,
         "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         "avatar": f"/api/avatar/{user.id}" if user.avatar else None,
-        "verified": user.username.lower() == "rayf",
+        "verified": user.username.lower() == "monk",
         "twofa": bool(user.totp_enabled),
     }
 
@@ -934,6 +934,30 @@ body{animation:rfFadeIn .35s ease both}
 .file{transition:transform .18s ease,background .18s ease}
 .file:hover{transform:translateX(3px)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+.chat-user-button{background:transparent;color:inherit;padding:0;text-align:left;display:flex;align-items:center;gap:5px;min-width:0;max-width:100%;cursor:pointer;flex-wrap:wrap}
+.chat-user-button:active{transform:scale(.98)}
+.chat-display-name{font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-username{display:block;width:100%;font-size:12px;color:#8da0ae;font-weight:500;line-height:1.05}
+.public-profile-page{min-height:100%;padding:12px 4px 30px;animation:profileIn .38s cubic-bezier(.2,.8,.2,1)}
+.profile-back{width:42px;height:42px;border-radius:14px;background:#22303d;color:#fff;font-size:30px;line-height:38px;margin-bottom:8px;transition:.2s}
+.profile-back:active{transform:scale(.92)}
+.public-profile-hero{text-align:center;padding:8px 0 24px}
+.public-profile-avatar{width:116px;height:116px;border-radius:50%;margin:0 auto 16px;display:grid;place-items:center;overflow:hidden;background:linear-gradient(145deg,#2a9df4,#6c5ce7);box-shadow:0 14px 40px #0007;animation:avatarPop .55s cubic-bezier(.17,.89,.32,1.28)}
+.public-profile-avatar img{width:100%;height:100%;object-fit:cover}
+.public-profile-name{font-size:24px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:5px;animation:fadeUp .45s .08s both}
+.public-profile-username{margin-top:5px;color:#8da0ae;font-size:15px;animation:fadeUp .45s .13s both}
+.public-profile-status{margin-top:10px;font-size:14px;animation:fadeUp .45s .18s both}
+.online-pill{color:#55d98b}.offline-pill{color:#8293a0}
+.public-profile-card{background:#17232e;border:1px solid #243543;border-radius:20px;overflow:hidden;animation:fadeUp .5s .2s both}
+.public-row{padding:17px 18px;border-bottom:1px solid #243543;display:flex;flex-direction:column;gap:6px}
+.public-row:last-child{border-bottom:0}
+.public-row span{font-size:12px;color:#8193a0}.public-row strong{font-size:15px;word-break:break-word}
+.profile-chat-btn{width:100%;margin-top:16px;padding:15px;border-radius:16px;background:#229ed9;color:#fff;font-weight:800;transition:.2s;animation:fadeUp .5s .28s both}
+.profile-chat-btn:active{transform:scale(.97)}
+@keyframes profileIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes avatarPop{0%{opacity:0;transform:scale(.65)}70%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 </style>
 </head>
 <body>
@@ -1056,7 +1080,13 @@ async function selectUser(id){
  renderUsers();
 }
 function closeChat(){$('sidebar').classList.remove('chat-open');$('chat').classList.remove('chat-open');selected=null;communityType=null;communityId=null}
-function updateHeader(){if(!selected)return;$('chatAvatar').outerHTML=avatarHtml(selected,'avatar');$('chatAvatar').id='chatAvatar';$('chatName').innerHTML=esc(selected.display_name)+' '+(selected.verified?verifiedBadge():'');$('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно'}
+function updateHeader(){
+ if(!selected)return;
+ $('chatAvatar').outerHTML=avatarHtml(selected,'avatar');
+ $('chatAvatar').id='chatAvatar';
+ $('chatName').innerHTML=`<button class="chat-user-button" onclick="openUserProfile(${selected.id})" aria-label="Открыть профиль ${esc(selected.username)}"><span class="chat-display-name">${esc(selected.display_name)}</span> ${selected.verified?verifiedBadge():''}<span class="chat-username">@${esc(selected.username)}</span></button>`;
+ $('chatStatus').textContent=selected.online?'🟢 онлайн':'был(а) недавно';
+}
 async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
  if(!selected)return;
@@ -1139,6 +1169,30 @@ function renderCommunityMessage(m){let row=document.createElement('div');row.cla
 
 function openDrawer(html){$('panelContent').innerHTML=html;$('drawer').classList.remove('hidden')}
 function closeDrawer(){$('drawer').classList.add('hidden')}
+async function openUserProfile(userId){
+ try{
+   const u = users.find(x=>x.id===userId);
+   if(!u){showToast('Пользователь не найден');return}
+   const p = await api('/api/profile/'+encodeURIComponent(u.username));
+   const badge = p.verified ? verifiedBadge() : '';
+   const status = p.online ? '<span class="online-pill">● в сети</span>' : '<span class="offline-pill">○ офлайн</span>';
+   openDrawer(`<div class="public-profile-page">
+     <button class="profile-back" onclick="closeDrawer()">‹</button>
+     <div class="public-profile-hero">
+       <div class="public-profile-avatar">${p.avatar?`<img src="${p.avatar}?t=${Date.now()}" alt="">`:initials(p)}</div>
+       <div class="public-profile-name">${esc(p.display_name||p.username)} ${badge}</div>
+       <div class="public-profile-username">@${esc(p.username)}</div>
+       <div class="public-profile-status">${status}</div>
+     </div>
+     <div class="public-profile-card">
+       <div class="public-row"><span>👤 Имя</span><strong>${esc(p.display_name||p.username)}</strong></div>
+       <div class="public-row"><span>🔗 Username</span><strong>@${esc(p.username)}</strong></div>
+       <div class="public-row"><span>📝 О себе</span><strong>${esc(p.bio||'О себе пока ничего не указано')}</strong></div>
+     </div>
+     <button class="profile-chat-btn" onclick="closeDrawer();showToast('Профиль открыт');">${selected?.id===p.id?'💬 Чат открыт':'💬 Написать сообщение'}</button>
+   </div>`);
+ }catch(e){showToast(e.message)}
+}
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
  const status=me?.online?'🟢 в сети':'⚪ офлайн';
