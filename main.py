@@ -1080,7 +1080,7 @@ button,.send,.save,.icon,.chat-menu{
 }
 .meta,.status,.preview{color:#9b9b9b!important}
 .dot{background:#bdbdbd!important;box-shadow:0 0 8px rgba(255,255,255,.28)}
-.verified-badge{filter:grayscale(1);opacity:.95}
+
 .avatar,.chat-avatar{
   background:#5b5b5b!important;
   color:#111!important;
@@ -1216,6 +1216,46 @@ button,.send,.save,.icon,.chat-menu{
   }
 }
 
+
+/* ===== RayfGram blue verification ===== */
+.verified-badge{
+  display:inline-flex!important;
+  width:18px!important;
+  height:18px!important;
+  margin-left:4px!important;
+  vertical-align:-3px!important;
+  flex:none;
+  filter:none!important;
+  opacity:1!important;
+  line-height:0;
+  position:relative;
+  animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both;
+}
+.verified-badge svg{
+  width:18px;
+  height:18px;
+  display:block;
+  overflow:visible;
+}
+.verified-badge circle{fill:#20a7ff}
+.verified-badge path{
+  fill:none;
+  stroke:#fff;
+  stroke-width:2.35;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+@keyframes rgVerifiedPop{
+  0%{opacity:0;transform:scale(.55) rotate(-8deg)}
+  65%{opacity:1;transform:scale(1.12) rotate(2deg)}
+  100%{opacity:1;transform:scale(1) rotate(0)}
+}
+.chatname .verified-badge{
+  width:18px!important;
+  height:18px!important;
+  vertical-align:-3px!important;
+}
+
 </style>
 </head>
 <body>
@@ -1292,7 +1332,9 @@ const $=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function initials(u){return esc((u?.display_name||u?.username||'?').slice(0,1).toUpperCase());}
 function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;}
-function verifiedBadge(){return '<span class="verified-badge" aria-label="Подтверждённый аккаунт"></span>';}
+function verifiedBadge(){
+  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
+}
 function navChats(){closeChat();loadUsers();setNav(0);}
 function navContacts(){$('search').focus();$('search').value='';loadUsers();setNav(1);}
 function setNav(i){document.querySelectorAll('.bottom-nav button').forEach((b,n)=>b.classList.toggle('active',n===i));}
@@ -1350,6 +1392,12 @@ function handleWS(d){
  if(d.type==='profile'){me.avatar=d.avatar;openProfile()}
 }
 function notifyIfNeeded(m){if(document.hidden && m.sender_id!==me.id && selected?.id!==m.sender_id && 'Notification' in window && Notification.permission==='granted'){new Notification('RayfGram',{body:m.text||'📎 Файл'})}}
+
+function normalizeVerified(u){
+  if(!u)return u;
+  u.verified=['rayf','monk'].includes(String(u.username||'').replace(/^@/,'').toLowerCase());
+  return u;
+}
 function renderUsers(){
  $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
  ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.last_message ? esc(u.last_message) : '@'+esc(u.username)}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
