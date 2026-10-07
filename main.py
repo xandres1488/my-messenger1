@@ -1293,20 +1293,20 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 @keyframes rgScamGlow{0%,100%{box-shadow:0 0 6px rgba(255,55,70,.12),inset 0 0 5px rgba(255,55,70,.05)}50%{box-shadow:0 0 13px rgba(255,55,70,.32),inset 0 0 9px rgba(255,55,70,.12)}}
 .chatname .scam-badge{height:17px!important;min-width:46px!important;font-size:8px!important;letter-spacing:1.2px!important;margin-left:5px!important;vertical-align:-2px!important}
 .profile-name .scam-badge{height:19px!important;min-width:50px!important;font-size:9px!important}
-@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
+.profile-bg-list{display:flex;flex-direction:column;gap:2px}.profile-bg-label{flex:1;min-width:0}.profile-bg-option:active{transform:scale(.98)}@media(max-width:430px){.profile-bg-pop{left:8px;right:8px;width:calc(100% - 16px);max-width:none;max-height:65vh;padding:10px}.profile-bg-option{min-height:58px;padding:13px 12px;font-size:16px}.profile-bg-swatch{width:32px;height:32px;border-radius:10px}}@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
 .profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
 .profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .profile-hero{position:relative;overflow:visible;transition:background .28s ease,border-color .28s ease,box-shadow .28s ease}
 .profile-bg-menu-btn{position:absolute;right:12px;top:12px;width:38px;height:38px;border:1px solid rgba(255,255,255,.12);border-radius:13px;background:rgba(0,0,0,.20);backdrop-filter:blur(10px);color:#fff;font-size:23px;line-height:34px;display:flex;align-items:center;justify-content:center;z-index:3;cursor:pointer;transition:transform .2s ease,background .2s ease,border-color .2s ease}
 .profile-bg-menu-btn::before{content:'⋮';display:block;line-height:1;font-size:25px;font-weight:900}\n.profile-bg-menu-btn:hover{transform:scale(1.06);background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.20)}
 .profile-bg-menu-btn:active{transform:scale(.92)}
-.profile-bg-pop{position:absolute;right:10px;top:56px;width:min(285px,calc(100vw - 28px));max-height:min(62vh,430px);overflow-y:auto;overflow-x:hidden;padding:10px;background:rgba(20,20,22,.96);border:1px solid rgba(255,255,255,.12);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.45);backdrop-filter:blur(16px);z-index:9999;animation:rgBgMenuIn .22s cubic-bezier(.2,.8,.2,1) both;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}
+.profile-bg-pop{position:absolute;right:10px;top:56px;width:calc(100% - 16px);max-width:360px;max-height:min(68vh,520px);overflow-y:auto;overflow-x:hidden;padding:10px;background:rgba(20,20,22,.96);border:1px solid rgba(255,255,255,.12);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.45);backdrop-filter:blur(16px);z-index:99999;animation:rgBgMenuIn .22s cubic-bezier(.2,.8,.2,1) both;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}
 .profile-bg-pop::-webkit-scrollbar{width:6px}
 .profile-bg-pop::-webkit-scrollbar-track{background:transparent}
 .profile-bg-pop::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:10px}
 .profile-bg-title{position:sticky;top:0;z-index:2;padding:7px 6px 10px;margin:-2px 0 3px;background:rgba(20,20,22,.96);font-size:15px;font-weight:800}
 .profile-bg-title{padding:7px 9px 9px;color:#aeb4bc;font-size:12px;font-weight:700}
-.profile-bg-option{width:100%;display:flex;align-items:center;gap:12px;border:0;background:transparent;color:#fff;padding:12px 10px;border-radius:13px;cursor:pointer;text-align:left;font-size:15px;font-weight:600;transition:background .18s ease,transform .18s ease;min-height:48px}
+.profile-bg-option{width:100%;display:flex;align-items:center;gap:13px;border:1px solid transparent;background:rgba(255,255,255,.035);color:#fff;padding:13px 12px;margin:4px 0;border-radius:15px;cursor:pointer;text-align:left;font-size:15px;font-weight:600;transition:background .18s ease,transform .18s ease;min-height:56px;box-sizing:border-box;touch-action:manipulation}
 .profile-bg-option:hover{background:rgba(255,255,255,.08);transform:translateX(2px)}
 .profile-bg-swatch{width:28px;height:28px;border-radius:9px;flex:none;border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 3px 10px rgba(0,0,0,.20)}
 .profile-bg-check{margin-left:auto;opacity:.9}
