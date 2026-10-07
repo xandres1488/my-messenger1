@@ -97,6 +97,7 @@ class Group(Base):
     __tablename__ = "groups"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
+    username: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     description: Mapped[str] = mapped_column(String(500), default="")
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     invite_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -191,6 +192,9 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
+        await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
+        await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
+        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -346,7 +350,7 @@ def verify_totp(secret: str, code: str) -> bool:
     return False
 
 def group_public(g: Group) -> dict:
-    return {"id": g.id, "name": g.name, "description": g.description, "invite_code": g.invite_code, "owner_id": g.owner_id}
+    return {"id": g.id, "name": g.name, "username": g.username or f"group_{g.id}", "description": g.description, "invite_code": g.invite_code, "owner_id": g.owner_id}
 
 def channel_public(c: Channel) -> dict:
     return {"id": c.id, "name": c.name, "username": c.username, "description": c.description, "invite_code": c.invite_code, "owner_id": c.owner_id}
@@ -407,6 +411,49 @@ async def users(request: Request):
         return [user_public(u, u.id in connections) for u in items]
 
 
+@app.get("/api/chat-search")
+async def chat_search(request: Request):
+    """Search users, groups and channels available to the current user."""
+    user = await current_user(request)
+    q = request.query_params.get("q", "").strip().lower().lstrip("@")
+    if not q:
+        return []
+    async with SessionLocal() as db:
+        user_result = await db.execute(
+            select(User).where(
+                User.id != user.id,
+                or_(User.username.ilike(f"%{q}%"), User.display_name.ilike(f"%{q}%"))
+            ).order_by(User.display_name).limit(50)
+        )
+        group_result = await db.execute(
+            select(Group).join(GroupMember, Group.id == GroupMember.group_id).where(
+                GroupMember.user_id == user.id,
+                or_(Group.username.ilike(f"%{q}%"), Group.name.ilike(f"%{q}%"))
+            ).order_by(Group.name).limit(50)
+        )
+        channel_result = await db.execute(
+            select(Channel).join(ChannelMember, Channel.id == ChannelMember.channel_id).where(
+                ChannelMember.user_id == user.id,
+                or_(Channel.username.ilike(f"%{q}%"), Channel.name.ilike(f"%{q}%"))
+            ).order_by(Channel.name).limit(50)
+        )
+
+        items = []
+        for u in user_result.scalars().all():
+            item = user_public(u, u.id in connections)
+            item["kind"] = "user"
+            items.append(item)
+        for g in group_result.scalars().all():
+            item = group_public(g)
+            item["kind"] = "group"
+            items.append(item)
+        for c in channel_result.scalars().all():
+            item = channel_public(c)
+            item["kind"] = "channel"
+            items.append(item)
+        return items
+
+
 @app.get("/api/chats")
 async def chats(request: Request):
     """Return persistent chats plus legacy conversations found in messages."""
@@ -437,11 +484,10 @@ async def chats(request: Request):
             if oid not in latest_by_user:
                 latest_by_user[oid] = m
 
-        if not other_ids:
-            return []
-
-        users_result = await db.execute(select(User).where(User.id.in_(list(other_ids))))
-        by_id = {u.id: u for u in users_result.scalars().all()}
+        by_id = {}
+        if other_ids:
+            users_result = await db.execute(select(User).where(User.id.in_(list(other_ids))))
+            by_id = {u.id: u for u in users_result.scalars().all()}
 
         items = []
         for other_id in other_ids:
@@ -455,6 +501,24 @@ async def chats(request: Request):
             item["last_message_at"] = latest.created_at.isoformat() if latest else created.isoformat()
             item["unread"] = 0
             item["blocked"] = bool(await db.scalar(select(Block).where(Block.blocker_id == user.id, Block.blocked_id == other_id)))
+            item["kind"] = "user"
+            items.append(item)
+
+        # Группы и каналы тоже являются полноценными элементами списка чатов.
+        group_result = await db.execute(
+            select(Group).join(GroupMember, Group.id == GroupMember.group_id).where(GroupMember.user_id == user.id)
+        )
+        for g in group_result.scalars().all():
+            item = group_public(g)
+            item.update({"kind": "group", "last_message": "Группа", "last_message_at": g.created_at.isoformat()})
+            items.append(item)
+
+        channel_result = await db.execute(
+            select(Channel).join(ChannelMember, Channel.id == ChannelMember.channel_id).where(ChannelMember.user_id == user.id)
+        )
+        for c in channel_result.scalars().all():
+            item = channel_public(c)
+            item.update({"kind": "channel", "last_message": "Канал", "last_message_at": c.created_at.isoformat()})
             items.append(item)
 
         items.sort(key=lambda x: x["last_message_at"], reverse=True)
@@ -588,11 +652,18 @@ async def twofa_disable(code: str = Form(...), user: User = Depends(current_user
         return {"enabled": False}
 
 @app.post("/api/groups")
-async def create_group(name: str = Form(...), description: str = Form(""), user: User = Depends(current_user)):
+async def create_group(name: str = Form(...), username: str = Form(""), description: str = Form(""), user: User = Depends(current_user)):
     name = name.strip()[:100]
+    username = username.strip().lower().lstrip("@")[:32]
     if not name: raise HTTPException(400, "Название группы обязательно")
+    if not username:
+        username = "group_" + secrets.token_hex(4)
+    if not username.replace("_", "").isalnum() or len(username) < 3:
+        raise HTTPException(400, "Некорректный username группы")
     async with SessionLocal() as db:
-        g = Group(name=name, description=description.strip()[:500], owner_id=user.id, invite_code=secrets.token_urlsafe(10))
+        if await db.scalar(select(Group).where(Group.username == username)):
+            raise HTTPException(400, "Такой username группы уже занят")
+        g = Group(name=name, username=username, description=description.strip()[:500], owner_id=user.id, invite_code=secrets.token_urlsafe(10))
         db.add(g); await db.flush()
         db.add(GroupMember(group_id=g.id, user_id=user.id, is_admin=True))
         await db.commit(); await db.refresh(g)
@@ -1609,13 +1680,17 @@ function normalizeVerified(u){
   return u;
 }
 function renderUsers(){
- $('userlist').innerHTML=users.map(u=>`<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))}</div></div></div>`).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
+ $('userlist').innerHTML=users.map(u=>{
+   if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
+   if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
+   return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}</div><div class="preview">${u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))}</div></div></div>`;
+ }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
  try{
    const q=$('search').value.trim();
-   users=q ? await api('/api/users?q='+encodeURIComponent(q)) : await api('/api/chats');
+   users=q ? await api('/api/chat-search?q='+encodeURIComponent(q)) : await api('/api/chats');
    users=users.map(normalizeVerified);
    renderUsers();
  }catch(e){}
@@ -1811,14 +1886,14 @@ function openPublicProfile(username){
 }
 function openCommunities(){openDrawer(`<h2>👥 Сообщества</h2><button class="save" onclick="createGroup()">➕ Создать группу</button><button class="save" onclick="createChannel()">📢 Создать канал</button><button class="save" onclick="joinCommunity()">🔗 Войти по invite-коду</button><div id="communityList" style="margin-top:15px"></div>`);loadCommunities()}
 async function loadCommunities(){try{let gs=await api('/api/groups'),cs=await api('/api/channels');$('communityList').innerHTML='<h3>Группы</h3>'+gs.map(g=>`<div class="user" onclick="selectGroup(${g.id})"><div class="uinfo"><div>👥 ${esc(g.name)}</div><div class="preview">Invite: ${esc(g.invite_code)}</div></div></div>`).join('')+'<h3>Каналы</h3>'+cs.map(c=>`<div class="user" onclick="selectChannel(${c.id})"><div class="uinfo"><div>📢 ${esc(c.name)} @${esc(c.username)}</div><div class="preview">Invite: ${esc(c.invite_code)}</div></div></div>`).join('')||'<p>Пока пусто</p>'}catch(e){}}
-async function createGroup(){let n=prompt('Название группы');if(!n)return;let fd=new FormData();fd.append('name',n);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана');loadCommunities()}catch(e){showToast(e.message)}}
-async function createChannel(){let n=prompt('Название канала');if(!n)return;let u=prompt('Username канала без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/channels',{method:'POST',body:fd});showToast('📢 Канал создан');loadCommunities()}catch(e){showToast(e.message)}}
+async function createGroup(){let n=prompt('Название группы');if(!n)return;let u=prompt('Username группы без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/groups',{method:'POST',body:fd});showToast('👥 Группа создана и добавлена в чаты');loadCommunities();loadUsers()}catch(e){showToast(e.message)}}
+async function createChannel(){let n=prompt('Название канала');if(!n)return;let u=prompt('Username канала без @');if(!u)return;let fd=new FormData();fd.append('name',n);fd.append('username',u);fd.append('description',prompt('Описание')||'');try{await api('/api/channels',{method:'POST',body:fd});showToast('📢 Канал создан и добавлен в чаты');loadCommunities();loadUsers()}catch(e){showToast(e.message)}}
 async function joinCommunity(){let c=prompt('Invite-код');if(!c)return;try{await api('/api/groups/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы вошли в группу');loadCommunities();return}catch(e){}try{await api('/api/channels/join/'+encodeURIComponent(c),{method:'POST'});showToast('Вы подписались на канал');loadCommunities()}catch(e){showToast('Неверный invite-код')}}
 
 
 let communityType=null, communityId=null;
-async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 Группа';$('chatStatus').textContent='';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
-async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 Канал';$('chatStatus').textContent='';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;const g=users.find(x=>x.kind==='group'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 '+(g?.name||'Группа');$('chatStatus').textContent=g?.username?'@'+g.username:'';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
+async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;const c=users.find(x=>x.kind==='channel'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 '+(c?.name||'Канал');$('chatStatus').textContent=c?.username?'@'+c.username:'';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
 function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
 
 let drawerCloseTimer=null;
