@@ -884,6 +884,20 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
+
+/* ===== RayfGram Motion Pack ===== */
+@keyframes rgFadeUp{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgFadeIn{from{opacity:0}to{opacity:1}}
+@keyframes rgPop{0%{opacity:0;transform:scale(.82)}70%{transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
+@keyframes rgSlideLeft{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:translateX(0)}}
+@keyframes rgSlideRight{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
+@keyframes rgPulse{0%,100%{box-shadow:0 0 0 0 rgba(53,208,127,.15)}50%{box-shadow:0 0 0 7px rgba(53,208,127,0)}}
+@keyframes rgGlow{0%,100%{box-shadow:0 0 0 0 rgba(42,171,238,0)}50%{box-shadow:0 0 22px rgba(42,171,238,.28)}}
+@keyframes rgTyping{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-4px);opacity:1}}
+.card{animation:rgFadeUp .55s cubic-bezier(.2,.8,.2,1) both}.logo{animation:rgPop .7s .08s both}.primary,.send,.save{transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.primary:hover,.send:hover,.save:hover{filter:brightness(1.08);box-shadow:0 7px 22px rgba(42,171,238,.18)}.primary:active,.send:active,.save:active,.icon:active,.profile-action:active{transform:scale(.94)}
+.sidebar{animation:rgSlideLeft .45s ease both}.chat{animation:rgFadeIn .45s ease both}.chathead{transition:background .25s ease}.chathead:hover{background:#1b2a36}.user{animation:rgSlideLeft .32s ease both;transition:transform .18s ease,background .18s ease}.user:hover{transform:translateX(3px)}.user:nth-child(2){animation-delay:.03s}.user:nth-child(3){animation-delay:.06s}.user:nth-child(4){animation-delay:.09s}.user:nth-child(5){animation-delay:.12s}
+.avatar{transition:transform .25s ease,box-shadow .25s ease}.user:hover .avatar,.chathead:hover .avatar{transform:scale(1.06)}.dot{animation:rgPulse 1.8s infinite}.messages{scroll-behavior:smooth}.msgrow{animation:rgFadeUp .28s cubic-bezier(.2,.8,.2,1) both}.msgrow.mine{animation-name:rgSlideRight}.msgrow:not(.mine){animation-name:rgSlideLeft}.bubble{transition:transform .16s ease,box-shadow .16s ease}.bubble:hover{transform:translateY(-1px);box-shadow:0 5px 16px #0005}.verified-badge{animation:rgPop .5s .12s both}.profile-hero{animation:rgFadeUp .42s ease both}.profile-hero .profile-avatar{animation:rgPop .55s .08s both}.profile-name{animation:rgFadeUp .4s .16s both}.profile-actions{animation:rgFadeUp .4s .22s both}.profile-info{animation:rgFadeUp .4s .28s both}.profile-action{transition:transform .18s ease,background .18s ease,box-shadow .18s ease}.profile-action:hover{transform:translateY(-2px);background:#292f36;box-shadow:0 7px 20px #0004}.drawer{animation:rgFadeIn .2s ease both}.panel{animation:rgSlideRight .28s cubic-bezier(.2,.8,.2,1) both}.toast{animation:rgFadeUp .25s ease both}.bottom-nav{animation:rgFadeUp .35s .1s both}.bottom-nav button{transition:transform .18s ease,background .18s ease,color .18s ease}.bottom-nav button:active{transform:scale(.9)}.search{transition:box-shadow .2s ease,transform .2s ease}.search:focus{box-shadow:0 0 0 2px rgba(42,171,238,.22);transform:scale(1.01)}.composer textarea{transition:box-shadow .2s ease,background .2s ease}.composer textarea:focus{box-shadow:0 0 0 2px rgba(42,171,238,.18);background:#101b25}.icon{transition:transform .16s ease,background .16s ease,color .16s ease}.icon:hover{transform:translateY(-1px)}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
@@ -1139,6 +1153,19 @@ async function searchMessages(){
 }
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
 if(token)startApp();
+
+// ===== Motion helpers =====
+function animateNewMessage(row){
+  if(!row)return;
+  row.style.animation='none';
+  row.offsetHeight;
+  row.style.animation='';
+}
+function animateList(){
+  document.querySelectorAll('#userlist .user').forEach((el,i)=>{el.style.animationDelay=Math.min(i*0.025,.2)+'s';});
+}
+const _renderUsers=renderUsers;
+renderUsers=function(){_renderUsers();animateList();};
 </script>
 </body>
 </html>
