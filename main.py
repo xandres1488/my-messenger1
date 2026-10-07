@@ -884,6 +884,56 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
+
+/* RayfGram animations v3 */
+@keyframes rfFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes rfScaleIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+@keyframes rfSlideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes rfSlideRight{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
+@keyframes rfPop{0%{transform:scale(.85)}70%{transform:scale(1.06)}100%{transform:scale(1)}}
+@keyframes rfPulse{0%,100%{box-shadow:0 0 0 0 #2aabee55}50%{box-shadow:0 0 0 8px #2aabee00}}
+@keyframes rfOnline{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.22);opacity:.7}}
+@keyframes rfShine{0%{transform:translateX(-140%)}100%{transform:translateX(140%)}}
+@keyframes rfTyping{0%,60%,100%{opacity:.35}30%{opacity:1}}
+body{animation:rfFadeIn .35s ease both}
+.card{animation:rfScaleIn .45s cubic-bezier(.2,.8,.2,1) both}
+.logo{animation:rfSlideUp .45s ease both}
+.primary,.switch,.icon,.profile-action,.send{transition:transform .18s ease,opacity .18s ease,background .18s ease,box-shadow .18s ease}
+.primary:hover,.profile-action:hover,.send:hover{transform:translateY(-2px);box-shadow:0 7px 20px #0004}
+.primary:active,.profile-action:active,.send:active,.icon:active{transform:scale(.95)}
+.user{animation:rfFadeIn .28s ease both;transition:background .2s ease,transform .2s ease}
+.user:hover{transform:translateX(3px)}
+.msgrow{animation:rfSlideUp .24s ease both}
+.bubble{transition:transform .18s ease,box-shadow .18s ease}
+.bubble:hover{transform:translateY(-1px);box-shadow:0 4px 12px #0004}
+.profile-hero{animation:rfScaleIn .38s cubic-bezier(.2,.8,.2,1) both;overflow:hidden;position:relative}
+.profile-hero::before{content:"";position:absolute;top:0;bottom:0;left:0;width:38%;background:linear-gradient(90deg,transparent,#ffffff10,transparent);transform:translateX(-140%);pointer-events:none;animation:rfShine 1.4s ease .35s 1}
+.profile-hero .profile-avatar{animation:rfPop .55s cubic-bezier(.2,.8,.2,1) .08s both,rfPulse 2.8s ease 1s infinite}
+.profile-name{animation:rfSlideUp .38s ease .18s both}
+.profile-username,.profile-status{animation:rfFadeIn .35s ease .24s both}
+.profile-actions{animation:rfSlideUp .4s ease .3s both}
+.profile-action{transition:transform .2s ease,background .2s ease,box-shadow .2s ease}
+.profile-info{animation:rfSlideUp .4s ease .38s both}
+.profile-row{transition:background .2s ease,padding-left .2s ease}
+.profile-row:hover{background:#20252b;padding-left:20px}
+.verified-badge{animation:rfPop .4s ease .35s both}
+.dot{animation:rfOnline 1.8s ease-in-out infinite}
+.bottom-nav{animation:rfSlideUp .35s ease .2s both}
+.bottom-nav button{transition:transform .18s ease,background .18s ease,color .18s ease}
+.bottom-nav button:active{transform:scale(.9)}
+.search{transition:box-shadow .2s ease,transform .2s ease}
+.search:focus{box-shadow:0 0 0 2px #2aabee55;transform:translateY(-1px)}
+.field{transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease}
+.field:focus{border-color:#2aabee;box-shadow:0 0 0 3px #2aabee22;transform:translateY(-1px)}
+.composer textarea{transition:box-shadow .2s ease,transform .2s ease}
+.composer textarea:focus{box-shadow:0 0 0 2px #2aabee33;transform:translateY(-1px)}
+.toast{animation:rfSlideUp .25s ease both}
+.drawer{animation:rfFadeIn .2s ease both}
+.panel{animation:rfSlideRight .3s cubic-bezier(.2,.8,.2,1) both}
+.context{animation:rfScaleIn .16s ease both}
+.file{transition:transform .18s ease,background .18s ease}
+.file:hover{transform:translateX(3px)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
