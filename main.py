@@ -1522,6 +1522,11 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 @keyframes rgBgMenuIn{from{opacity:0;transform:translateY(-6px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
 .profile-hero .profile-avatar{width:126px;height:126px;min-width:126px;margin:2px auto 16px;border-radius:50%;font-size:42px;background:#2aabee;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:800;box-shadow:0 0 0 5px #243541,0 12px 35px #0007;align-self:center}
 .profile-hero .profile-avatar img{display:block;width:100%;height:100%;object-fit:cover}
+/* ===== @rayfl Creator Pin ===== */
+.creator-pin{display:inline-flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#d8a7ff 0%,#a855f7 34%,#7c3aed 68%,#5b21b6 100%);border:1px solid #c084fc;color:#fff;cursor:pointer;vertical-align:middle;box-shadow:0 0 7px rgba(168,85,247,.75),0 0 15px rgba(124,58,237,.42);font-size:14px;line-height:1;transition:transform .16s ease,box-shadow .16s ease}
+.creator-pin:active{transform:scale(.9);box-shadow:0 0 12px rgba(168,85,247,.95),0 0 22px rgba(124,58,237,.55)}
+.creator-pin svg{width:15px;height:15px;filter:drop-shadow(0 0 3px rgba(255,255,255,.45))}
+.creator-pin svg path{fill:#fff}
 .profile-name{font-size:27px;font-weight:800;letter-spacing:-.5px;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;width:100%}
 .profile-username{color:#8ea2b1;margin-top:7px;font-size:15px;line-height:1.3;width:100%}
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
@@ -2292,7 +2297,7 @@ function openPublicProfile(username){
      <div class="profile-hero" style="background:${profileBgStyle(u.profile_bg)};color:${profileBgTextColor(u.profile_bg)}">
        ${String(me?.username||'').toLowerCase()===String(u.username||'').toLowerCase()?`<button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(u.username)}','${u.profile_bg||'gray'}')">⋮</button><div id="profileBgMenu"></div>`:''}
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
-       <div class="profile-name">${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
+       <div class="profile-name">${isCreatorAccount(u)?creatorPin():''}${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
        <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">был(а) недавно</div>
      </div>
@@ -2342,6 +2347,11 @@ function closeDrawer(){
    d.classList.remove('rg-closing');
  },220);
 }
+function creatorPin(){
+  return '<button class="creator-pin" type="button" title="Пин создателя" aria-label="Пин создателя" onclick="event.stopPropagation();showToast('это пин создателя')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.55 6.1 6.45.55-4.9 4.25 1.48 6.32L12 16.35 6.42 19.72 7.9 13.4 3 9.15l6.45-.55L12 2.5z"></path></svg></button>';
+}
+function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayfl'; }
+
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
  const scam=me?.scam?scamBadge():'';
@@ -2351,7 +2361,7 @@ function openProfile(){
      <button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(me?.username||'')}','${me?.profile_bg||'gray'}')">⋮</button>
      <div id="profileBgMenu"></div>
      <div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div>
-     <div class="profile-name">${esc(me.display_name||me.username)} ${v}${scam}</div>
+     <div class="profile-name">${isCreatorAccount(me)?creatorPin():''}${esc(me.display_name||me.username)} ${v}${scam}</div>
      <div class="profile-username">@${esc(me.username)}</div>
      <div class="profile-status">${status}</div>
    </div>
