@@ -179,22 +179,6 @@ class UserGift(Base):
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
-class PromoCode(Base):
-    __tablename__ = "promo_codes"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    stars: Mapped[int] = mapped_column(Integer, default=0)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-
-class PromoRedemption(Base):
-    __tablename__ = "promo_redemptions"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    promo_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    redeemed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
 
 class Reaction(Base):
     __tablename__ = "reactions"
@@ -264,7 +248,6 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
         await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_promo_redemption_user_promo ON promo_redemptions(promo_id, user_id)")
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
@@ -279,11 +262,6 @@ async def init_db():
                 GiftCatalog(code="cosmic_cat", name="Космический кот", emoji="🐱", rarity="Эпический", collection="RayfGram Space", price_stars=250, description="Кот из космической коллекции."),
                 GiftCatalog(code="royal_crown", name="Корона Rayf", emoji="👑", rarity="Легендарный", collection="RayfGram Royals", price_stars=500, description="Редкая корона для настоящей легенды."),
             ])
-            await seed_db.commit()
-        # Базовый промокод RayfGram. Один аккаунт может активировать его только один раз.
-        promo = await seed_db.scalar(select(PromoCode).where(PromoCode.code == "10ONLINE"))
-        if not promo:
-            seed_db.add(PromoCode(code="10ONLINE", stars=100, active=True))
             await seed_db.commit()
 
 
@@ -407,25 +385,6 @@ async def rayfstar(user: User = Depends(current_user)):
 @app.get("/api/stars")
 async def stars(user: User = Depends(current_user)):
     return {"stars": int(user.stars or 0)}
-
-
-@app.post("/api/promo/redeem")
-async def redeem_promo(code: str = Form(...), user: User = Depends(current_user)):
-    clean = code.strip().upper()
-    if not clean:
-        raise HTTPException(400, "Введите промокод")
-    async with SessionLocal() as db:
-        promo = await db.scalar(select(PromoCode).where(PromoCode.code == clean, PromoCode.active.is_(True)))
-        if not promo:
-            raise HTTPException(400, "Промокод не найден или уже недоступен")
-        already = await db.scalar(select(PromoRedemption).where(PromoRedemption.promo_id == promo.id, PromoRedemption.user_id == user.id))
-        if already:
-            raise HTTPException(400, "Этот промокод уже активирован на вашем аккаунте")
-        account = await db.scalar(select(User).where(User.id == user.id).with_for_update())
-        account.stars = int(account.stars or 0) + int(promo.stars or 0)
-        db.add(PromoRedemption(promo_id=promo.id, user_id=user.id))
-        await db.commit()
-        return {"ok": True, "code": clean, "added": int(promo.stars or 0), "stars": int(account.stars or 0)}
 
 
 def gift_public(g: GiftCatalog, owner: UserGift | None = None) -> dict:
@@ -1539,9 +1498,15 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .gift-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .gift-title-row button{border:0;background:#252b32;color:#fff;border-radius:12px;padding:9px 12px;font-weight:700}
 @media(max-width:430px){.gifts-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gift-card{padding:10px}.gift-card .gift-emoji{font-size:40px}}
-.profile-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:12px 0 18px}
-.profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:11px 4px;font-weight:700;min-height:62px;font-size:12px}
-.profile-action span{display:block;font-size:23px;margin-bottom:3px}
+.profile-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 20px;width:100%}
+.profile-action{background:#22272d;border:1px solid #343c45;color:#fff;border-radius:18px;padding:15px 6px;font-weight:800;min-height:78px;width:100%;font-size:14px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:transform .16s ease,background .16s ease,border-color .16s ease}
+.profile-action span{display:block;font-size:28px;line-height:1;margin-bottom:7px}
+.profile-action:active{transform:scale(.96);background:#2a3037}
+@media(max-width:420px){
+  .profile-actions{gap:8px}
+  .profile-action{min-height:74px;padding:13px 4px;font-size:13px}
+  .profile-action span{font-size:26px}
+}
 .profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
 .profile-row{padding:14px 16px;border-bottom:1px solid #252a30}
 .profile-row:last-child{border-bottom:0}
@@ -2349,7 +2314,6 @@ function openProfile(){
    </div>
    <div class="profile-actions">
      <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
-     <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
      <button class="profile-action" onclick="openGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
      <button class="profile-action" onclick="openSettings()"><span>⚙️</span>Настройки</button>
    </div>
@@ -2425,19 +2389,6 @@ async function openRayfStar(){
  try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
 }
 function openBuyStars(){openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#8d8d8d;font-size:18px">Скоро появится</div>`)}
-function openPromoCodes(){openDrawer(`<h2>🎁 Промокоды</h2><div style="color:#8d8d8d;margin:8px 0 16px">Введите промокод и получите звёзды на этот аккаунт.</div><input id="promoCodeInput" class="field" maxlength="64" autocomplete="off" placeholder="Промокод"><button class="save" onclick="redeemPromoCode()">🎁 Активировать</button><div style="margin-top:16px;color:#7f8b96;font-size:13px">Например: <b>10ONLINE</b></div>`)}
-async function redeemPromoCode(){
-  const input=document.getElementById('promoCodeInput');
-  const code=String(input?.value||'').trim();
-  if(!code){showToast('Введите промокод');return}
-  try{
-    const fd=new FormData();fd.append('code',code);
-    const d=await api('/api/promo/redeem',{method:'POST',body:fd});
-    me.stars=d.stars;
-    showToast('🎁 +' + d.added + ' ⭐ Получено!');
-    setTimeout(()=>openRayfStar(),350);
-  }catch(e){showToast(e.message)}
-}
 
 async function saveProfileUsername(){
   const input=document.getElementById('profileUsernameInput');
@@ -2470,7 +2421,7 @@ function fakeBadge(u){
 
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><button class="save" onclick="openPromoCodes()">🎁 Промокоды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
+ <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
