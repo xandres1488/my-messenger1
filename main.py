@@ -2076,7 +2076,7 @@ function renderUsers(){
    if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}${u.fake?fakeBadge(u):''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.secondary_username ? '@'+esc(u.username)+' · @'+esc(u.secondary_username) : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))))}</div></div></div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${isCreatorAccount(u)?creatorPin():''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}${u.fake?fakeBadge(u):''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.secondary_username ? '@'+esc(u.username)+' · @'+esc(u.secondary_username) : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))))}</div></div></div>`;
  }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
@@ -2114,7 +2114,7 @@ function updateHeader(){
  if(!selected)return;
  const wrap=$('chatAvatarWrap');
  if(wrap)wrap.innerHTML=avatarHtml(selected,'chat-avatar').replace('class="chat-avatar"','id="chatAvatar" class="chat-avatar"');
- $('chatName').innerHTML=esc(selected.banned?'УДАЛЕННЫЙ АКАУНТ':(selected.display_name||selected.username))+' '+(selected.banned?'':((selected.verified?verifiedBadge():'')+(selected.scam?scamBadge():'')));
+ $('chatName').innerHTML=(selected.banned?'УДАЛЕННЫЙ АККАУНТ':((isCreatorAccount(selected)?creatorPin():'')+esc(selected.display_name||selected.username)))+' '+(selected.banned?'':((selected.verified?verifiedBadge():'')+(selected.scam?scamBadge():'')+(selected.fake?fakeBadge(selected):'')));
  const status=$('chatStatus');
  const typing=typingUserId===selected.id;
  status.textContent = typing ? 'печатает..' : selected.online ? 'в сети' : 'был(а) недавно';
@@ -2350,7 +2350,7 @@ function closeDrawer(){
 function creatorPin(){
   return `<button class="creator-pin" type="button" title="Пин создателя" aria-label="Пин создателя" onclick="event.stopPropagation();showToast('это пин создателя')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.55 6.1 6.45.55-4.9 4.25 1.48 6.32L12 16.35 6.42 19.72 7.9 13.4 3 9.15l6.45-.55L12 2.5z"></path></svg></button>`;
 }
-function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayfl'; }
+function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayf'; }
 
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
