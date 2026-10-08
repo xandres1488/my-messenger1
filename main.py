@@ -47,6 +47,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    secondary_username: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(80), default="")
     bio: Mapped[str] = mapped_column(String(160), default="")
@@ -167,6 +168,7 @@ class Reaction(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS secondary_username VARCHAR(32)")
         # Мягкая миграция существующей базы: старые аккаунты и сообщения сохраняются.
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(80) DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR(160) DEFAULT ''")
@@ -221,6 +223,7 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chats_user2_id ON chats(user2_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
+        await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
 
 
 @app.on_event("startup")
@@ -262,6 +265,7 @@ def user_public(user: User, online: bool = False) -> dict:
     return {
         "id": user.id,
         "username": user.username,
+        "secondary_username": None if banned else (user.secondary_username or None),
         "display_name": "УДАЛЕННЫЙ АКАУНТ" if banned else (user.display_name or user.username),
         "bio": "" if banned else (user.bio or ""),
         "online": False if banned else online,
@@ -458,7 +462,7 @@ async def users(request: Request):
         result = await db.execute(select(User).where(User.id != user.id).order_by(User.display_name))
         items = result.scalars().all()
         if q:
-            items = [u for u in items if q in u.username.lower() or q in (u.display_name or "").lower()]
+            items = [u for u in items if q in u.username.lower() or q in (u.secondary_username or "").lower() or q in (u.display_name or "").lower()]
         return [user_public(u, u.id in connections) for u in items]
 
 
@@ -473,7 +477,7 @@ async def chat_search(request: Request):
         user_result = await db.execute(
             select(User).where(
                 User.id != user.id,
-                or_(User.username.ilike(f"%{q}%"), User.display_name.ilike(f"%{q}%"))
+                or_(User.username.ilike(f"%{q}%"), User.secondary_username.ilike(f"%{q}%"), User.display_name.ilike(f"%{q}%"))
             ).order_by(User.display_name).limit(50)
         )
         group_result = await db.execute(
@@ -667,7 +671,8 @@ async def messages(other_id: int, request: Request):
 @app.get("/api/profile/{username}")
 async def public_profile(username: str):
     async with SessionLocal() as db:
-        u = await db.scalar(select(User).where(User.username == username.strip().lower()))
+        key = username.strip().lower().lstrip("@")
+        u = await db.scalar(select(User).where(or_(User.username == key, User.secondary_username == key)).limit(1))
         if not u:
             raise HTTPException(404, "Пользователь не найден")
         return user_public(u, u.id in connections)
@@ -1735,6 +1740,8 @@ button,.send,.save,.icon,.chat-menu{
 .chat-messages,.messages,.chat-body,#messages,#chatMessages{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain;scroll-behavior:smooth;min-height:0;}
 
 .fake-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:38px;height:18px;padding:0 6px;margin-left:5px;vertical-align:middle;border-radius:6px;background:#e53935;color:#fff;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:18px;box-shadow:0 0 10px rgba(229,57,53,.35);animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both}
+.secondary-username-line{font-size:11px!important;line-height:14px!important;color:#8d8d8d!important;margin-top:2px!important;font-weight:400!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.profile-secondary-username{font-size:12px;color:#9aa6b2;margin-top:2px;line-height:15px;font-weight:400}
 
 </style>
 </head>
@@ -1907,7 +1914,7 @@ function renderUsers(){
    if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}${u.fake?fakeBadge(u):''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}${u.fake?fakeBadge(u):''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.secondary_username ? '@'+esc(u.username)+' · @'+esc(u.secondary_username) : (u.last_message ? esc(u.last_message) : '@'+esc(u.username))))}</div></div></div>`;
  }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
@@ -2130,6 +2137,7 @@ function openPublicProfile(username){
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
        <div class="profile-name">${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
        <div class="profile-username">@${esc(u.username)}</div>
+       ${u.secondary_username?`<div class="profile-secondary-username">@${esc(u.secondary_username)}</div>`:''}
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
      <div class="profile-actions">
@@ -2140,6 +2148,7 @@ function openPublicProfile(username){
      <div class="profile-section">Информация</div>
      <div class="profile-info">
        <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(u.username)}</div></div>
+       ${u.secondary_username?`<div class="profile-row"><div class="profile-label">Дополнительный username</div><div class="profile-value">@${esc(u.secondary_username)}</div></div>`:''}
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
      </div>
@@ -2200,6 +2209,7 @@ function openProfile(){
    <div class="profile-section">Информация</div>
    <div class="profile-info">
      <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
+     ${me.secondary_username?`<div class="profile-row"><div class="profile-label">Дополнительный username</div><div class="profile-value">@${esc(me.secondary_username)}</div></div>`:''}
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
    </div>
