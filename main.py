@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -221,7 +221,8 @@ class UserGift(Base):
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     upgrade_level: Mapped[int] = mapped_column(Integer, default=0)
     backdrop: Mapped[str] = mapped_column(String(40), default="Obsidian")
-    pattern: Mapped[str] = mapped_column(String(40), default="Classic")
+    pattern: Mapped[str] = mapped_column(String(40), default="—")
+    model_variant: Mapped[str] = mapped_column(String(64), default="base")
 
 
 class NftMarketListing(Base):
@@ -306,14 +307,16 @@ async def init_db():
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMPTZ DEFAULT NOW()")
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS upgrade_level INTEGER DEFAULT 0")
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS backdrop VARCHAR(40) DEFAULT 'Obsidian'")
-        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS pattern VARCHAR(40) DEFAULT 'Classic'")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS pattern VARCHAR(40) DEFAULT '—'")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS model_variant VARCHAR(64) DEFAULT 'base'")
         await conn.exec_driver_sql("UPDATE gift_catalog SET is_collectible = FALSE WHERE is_collectible IS NULL")
         await conn.exec_driver_sql("UPDATE gift_catalog SET model_code = 'default' WHERE model_code IS NULL OR model_code = ''")
         await conn.exec_driver_sql("UPDATE gift_catalog SET base_backdrop = 'Obsidian' WHERE base_backdrop IS NULL OR base_backdrop = ''")
         await conn.exec_driver_sql("UPDATE user_gifts SET acquired_at = NOW() WHERE acquired_at IS NULL")
         await conn.exec_driver_sql("UPDATE user_gifts SET upgrade_level = 0 WHERE upgrade_level IS NULL")
-        await conn.exec_driver_sql("UPDATE user_gifts SET backdrop = 'Obsidian' WHERE backdrop IS NULL OR backdrop = ''")
-        await conn.exec_driver_sql("UPDATE user_gifts SET pattern = 'Classic' WHERE pattern IS NULL OR pattern = ''")
+        await conn.exec_driver_sql("UPDATE user_gifts SET backdrop = 'Без фона' WHERE backdrop IS NULL OR backdrop = ''")
+        await conn.exec_driver_sql("UPDATE user_gifts SET pattern = '—' WHERE pattern IS NULL OR pattern = ''")
+        await conn.exec_driver_sql("UPDATE user_gifts SET model_variant = 'base' WHERE model_variant IS NULL OR model_variant = ''")
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS nft_market_listings (
                 id SERIAL PRIMARY KEY,
@@ -347,30 +350,60 @@ async def init_db():
             ])
             await seed_db.commit()
 
-        collectible_defs = [
-            ("nft_pepe", "Pepe", "🐸", "Редкий", 10000, "Pepe", "Emerald", "Графическая коллекционная модель Pepe."),
-            ("nft_midas_pepe", "Midas Pepe", "🐸", "Легендарный", 25000, "MidasPepe", "Golden", "Золотая коллекционная модель с эффектом металла."),
-            ("nft_diamond_pepe", "Diamond Pepe", "🐸", "Легендарный", 50000, "DiamondPepe", "Glass Lagoon", "Алмазная модель с холодным сиянием."),
-            ("nft_lucky_cat", "Lucky Cat", "🐱", "Эпический", 7500, "LuckyCat", "Royal Blue", "Коллекционная удачливая кошка."),
-            ("nft_cyber_panda", "Cyber Panda", "🐼", "Эпический", 12000, "CyberPanda", "Neon", "Киберпанк-модель с неоновым контуром."),
-            ("nft_neon_fox", "Neon Fox", "🦊", "Эпический", 15000, "NeonFox", "Sunset", "Неоновая коллекционная лиса."),
-            ("nft_rayfbot", "RayfBot", "🤖", "Легендарный", 20000, "RayfBot", "Electric Purple", "Фирменная модель RayfGram."),
-            ("nft_alien_rayf", "Alien Rayf", "👽", "Легендарный", 30000, "AlienRayf", "Cosmic", "Инопланетная версия Rayf."),
-            ("nft_mystic_eye", "Mystic Eye", "👁️", "Эпический", 18000, "MysticEye", "Gothic", "Мистический графический глаз."),
-            ("nft_rayf_crown", "Rayf Crown", "👑", "Легендарный", 40000, "RayfCrown", "Royal Gold", "Корона коллекции RayfGram."),
-            ("nft_dark_skull", "Dark Skull", "💀", "Эпический", 22000, "DarkSkull", "Crimson", "Тёмная коллекционная модель черепа."),
-            ("nft_rayf_dragon", "Rayf Dragon", "🐉", "Легендарный", 35000, "RayfDragon", "Emerald", "Дракон из премиальной коллекции."),
-            ("nft_mini_pepe", "Mini Pepe", "🐸", "Обычный", 300, "MiniPepe", "Emerald", "Маленькая коллекционная модель Pepe."),
-            ("nft_tiny_lucky_cat", "Tiny Lucky Cat", "🐱", "Обычный", 400, "TinyLuckyCat", "Royal Blue", "Миниатюрная Lucky Cat."),
-            ("nft_mini_alien", "Mini Alien", "👽", "Обычный", 450, "MiniAlien", "Cosmic", "Миниатюрный Alien."),
-            ("nft_pocket_rayfbot", "Pocket RayfBot", "🤖", "Обычный", 500, "PocketRayfBot", "Electric Purple", "Карманный RayfBot."),
-            ("nft_mini_neon_fox", "Mini Neon Fox", "🦊", "Обычный", 550, "MiniNeonFox", "Sunset", "Миниатюрная Neon Fox."),
-            ("nft_little_rayf_crown", "Little Rayf Crown", "👑", "Обычный", 600, "LittleRayfCrown", "Royal Gold", "Маленькая корона RayfGram."),
+        # Полностью заменяем старые NFT-модели на новую коллекцию v2.
+        old_collectible_codes = [
+            "nft_pepe", "nft_midas_pepe", "nft_diamond_pepe", "nft_lucky_cat",
+            "nft_cyber_panda", "nft_neon_fox", "nft_rayfbot", "nft_alien_rayf",
+            "nft_mystic_eye", "nft_rayf_crown", "nft_dark_skull", "nft_rayf_dragon",
+            "nft_mini_pepe", "nft_tiny_lucky_cat", "nft_mini_alien", "nft_pocket_rayfbot",
+            "nft_mini_neon_fox", "nft_little_rayf_crown"
         ]
-        for code, name, emoji, rarity, price, model_code, backdrop, desc in collectible_defs:
+        old_rows = (await seed_db.execute(select(GiftCatalog).where(GiftCatalog.code.in_(old_collectible_codes)))).scalars().all()
+        for old_gift in old_rows:
+            owned = (await seed_db.execute(select(UserGift).where(UserGift.gift_id == old_gift.id))).scalars().all()
+            for old_ug in owned:
+                await seed_db.execute(delete(NftMarketListing).where(NftMarketListing.user_gift_id == old_ug.id))
+                await seed_db.delete(old_ug)
+            await seed_db.delete(old_gift)
+        if old_rows:
+            await seed_db.commit()
+
+        collectible_defs_v2 = [
+            # code, name, emoji, rarity, price, model_code, description
+            ("nft_pepe_v2", "Pepe", "🐸", "Редкий", 2000, "pepe", "Базовый Pepe. Одно улучшение за 125⭐️."),
+            ("nft_digital_pet_v2", "Цифровой питомец", "📟", "Редкий", 500, "digital_pet", "Коллекционная модель цифрового питомца."),
+            ("nft_bells_v2", "Колокольчики", "🔔", "Обычный", 250, "bells", "Коллекционная пара колокольчиков."),
+            ("nft_snow_globe_v2", "Снежный шар", "❄️", "Редкий", 700, "snow_globe", "Коллекционный снежный шар."),
+            ("nft_ice_cauldron_v2", "Ледяной котёл", "🫕", "Эпический", 1200, "ice_cauldron", "Холодная коллекционная модель."),
+            ("nft_moon_smile_v2", "Лунный смайл", "🌙", "Редкий", 4000, "moon_smile", "Лунная коллекционная модель."),
+            ("nft_mystery_box_v2", "Таинственный подарок", "🎁", "Эпический", 600, "mystery_box", "Таинственная коробка с коллекционным стилем."),
+            ("nft_death_flower_v2", "Цветок смерти", "🌸", "Эпический", 200, "death_flower", "Тёмный коллекционный цветок."),
+            ("nft_ghost_box_v2", "Ящик с привидениями", "👻", "Эпический", 550, "ghost_box", "Коробка с маленькими призраками."),
+            ("nft_record_player_v2", "Музыкальный проигрыватель", "🎵", "Редкий", 1400, "record_player", "Коллекционный проигрыватель."),
+            ("nft_flower_v2", "Цветок", "🌼", "Обычный", 5000, "flower", "Минималистичный коллекционный цветок."),
+            ("nft_cake_v2", "Торт", "🎂", "Редкий", 500, "cake", "Праздничная коллекционная модель."),
+            ("nft_birthday_plaque_v2", "С днём рождения", "🎉", "Обычный", 250, "birthday_plaque", "Праздничная коллекционная табличка."),
+            ("nft_magic_wand_v2", "Волшебная палочка", "🪄", "Эпический", 500, "magic_wand", "Сверкающая коллекционная палочка."),
+            ("nft_bday_calendar_v2", "Календарь", "📅", "Обычный", 700, "bday_calendar", "Коллекционный календарь."),
+            ("nft_santa_hat_v2", "Новогодняя шапка", "🎅", "Редкий", 350, "santa_hat", "Праздничная коллекционная шапка."),
+            ("nft_rayf_star_v2", "Rayf Star", "⭐", "Эпический", 800, "rayf_star", "Фирменная коллекционная звезда RayfGram."),
+            ("nft_rayf_gift_v2", "Rayf Подарок", "🎁", "Редкий", 700, "rayf_gift", "Фирменная коллекционная коробка RayfGram."),
+            ("nft_rayf_heart_v2", "Rayf Сердце", "💜", "Легендарный", 1000, "rayf_heart", "Фирменное коллекционное сердце RayfGram."),
+        ]
+        for code, name, emoji, rarity, price, model_code, desc in collectible_defs_v2:
             exists = await seed_db.scalar(select(GiftCatalog).where(GiftCatalog.code == code).limit(1))
             if not exists:
-                seed_db.add(GiftCatalog(code=code, name=name, emoji=emoji, rarity=rarity, collection="RayfGram Collectibles", price_stars=price, description=desc, is_collectible=True, model_code=model_code, base_backdrop=backdrop))
+                seed_db.add(GiftCatalog(code=code, name=name, emoji=emoji, rarity=rarity, collection="RayfGram Collectibles", price_stars=price, description=desc, is_collectible=True, model_code=model_code, base_backdrop="Без фона"))
+            else:
+                # Синхронизируем каталог с актуальными ценами/моделями даже если запись уже была в PostgreSQL.
+                exists.name = name
+                exists.emoji = emoji
+                exists.rarity = rarity
+                exists.price_stars = price
+                exists.description = desc
+                exists.is_collectible = True
+                exists.model_code = model_code
+                exists.base_backdrop = "Без фона"
         await seed_db.commit()
 
 
@@ -556,20 +589,45 @@ def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | No
         "owner_gift_id": owner.id if owner else None,
         "owner_id": owner.owner_id if owner else None,
         "upgrade_level": int(owner.upgrade_level or 0) if owner else 0,
-        "backdrop": owner.backdrop if owner else g.base_backdrop,
-        "pattern": owner.pattern if owner else "Classic",
+        "backdrop": owner.backdrop if owner else "Без фона",
+        "pattern": owner.pattern if owner else "—",
+        "model_variant": owner.model_variant if owner else "base",
         "sender_username": sender.username if sender else None,
         "owner_username": owner_user.username if owner_user else None,
     }
 
 
-NFT_BACKDROPS = ["Electric Purple", "Royal Blue", "Emerald", "Sunset", "Crimson", "Candy Pink", "Obsidian", "Golden", "Cosmic", "Glass Lagoon"]
-NFT_PATTERNS = ["Classic", "Stars", "Waves", "Circuit", "Spark", "Royal", "Flame", "Chrome", "Pixel", "Aura"]
-
+NFT_BACKDROPS = ["Зелёный", "Жёлтый", "Голубой", "Фиолетовый", "Бежевый", "Чёрный", "Розовый", "Красный", "Золотой", "Серый", "Коричневый"]
+NFT_PATTERNS = ["Корона", "Сердце", "Цветок", "Звезда", "Подарок", "Алмаз", "Пламя", "Лист", "Искра"]  # random independent symbol per upgraded NFT
+NFT_VARIANTS = {
+    "pepe": ["green", "silver", "white_cap", "neon_blue", "gold_star"],
+    "digital_pet": ["pink", "blue", "gold", "black", "mint"],
+    "bells": ["red_gold", "blue_silver", "green_red", "purple_silver", "ice_blue"],
+    "snow_globe": ["blue", "pink", "gold", "black", "mint"],
+    "ice_cauldron": ["blue", "purple", "pink", "black", "mint"],
+    "moon_smile": ["purple", "blue", "pink", "silver", "gold"],
+    "mystery_box": ["red", "purple", "blue", "mint", "gold"],
+    "death_flower": ["purple", "red", "blue", "silver", "pink"],
+    "ghost_box": ["blue", "pink", "mint", "orange", "purple"],
+    "record_player": ["pink", "blue", "gold", "black", "mint"],
+    "flower": ["pink", "blue", "white", "purple", "gold"],
+    "cake": ["pink", "blue", "gold", "white", "purple"],
+    "birthday_plaque": ["pink", "blue", "gold", "black", "purple"],
+    "magic_wand": ["pink", "blue", "gold", "silver", "purple"],
+    "bday_calendar": ["pink", "blue", "gold", "silver", "purple"],
+    "santa_hat": ["red", "blue", "purple", "black", "gold"],
+    "rayf_star": ["purple", "blue", "gold", "silver", "pink"],
+    "rayf_gift": ["pink", "blue", "gold", "purple", "mint"],
+    "rayf_heart": ["purple", "red", "pink", "blue", "gold"],
+}
 
 def nft_upgrade_cost(g: GiftCatalog, current_level: int) -> int:
-    # Уровни 1-3: стоимость растёт от базовой цены, но остаётся доступной для малых коллекций.
-    return max(100, int(round((int(g.price_stars or 0) * (current_level + 1) * 0.05) / 50) * 50))
+    if int(current_level or 0) >= 1:
+        return 0
+    if g.code == "nft_pepe_v2":
+        return 125
+    # Остальные новые коллекционные подарки: доступное единичное улучшение.
+    return 125
 
 
 def nft_market_public(listing: NftMarketListing, ug: UserGift, gift: GiftCatalog, seller: User) -> dict:
@@ -602,8 +660,8 @@ async def upgrade_nft(user_gift_id: int = Form(...), user: User = Depends(curren
         gift = await db.get(GiftCatalog, ug.gift_id)
         if not gift or not gift.is_collectible:
             raise HTTPException(400, "Этот подарок нельзя улучшить")
-        if ug.upgrade_level >= 3:
-            raise HTTPException(400, "Подарок уже улучшен до максимального уровня")
+        if int(ug.upgrade_level or 0) >= 1:
+            raise HTTPException(400, "Этот NFT уже улучшен. Доступно только одно улучшение.")
         listed = await db.scalar(select(NftMarketListing).where(NftMarketListing.user_gift_id == ug.id).limit(1))
         if listed:
             raise HTTPException(400, "Сначала снимите подарок с рынка")
@@ -613,9 +671,11 @@ async def upgrade_nft(user_gift_id: int = Form(...), user: User = Depends(curren
         owner.stars = int(owner.stars or 0) - cost
         level = int(ug.upgrade_level or 0) + 1
         ug.upgrade_level = level
-        # Детерминированный красивый набор атрибутов на каждом уровне.
-        ug.backdrop = NFT_BACKDROPS[(ug.serial + level * 2) % len(NFT_BACKDROPS)]
-        ug.pattern = NFT_PATTERNS[(ug.serial * 3 + level) % len(NFT_PATTERNS)]
+        # После единственного улучшения случайно выбираются 1 из 5 моделей, фон и значок.
+        variants = NFT_VARIANTS.get(gift.model_code, ["variant_1", "variant_2", "variant_3", "variant_4", "variant_5"])
+        ug.model_variant = secrets.choice(variants)
+        ug.backdrop = secrets.choice(NFT_BACKDROPS)
+        ug.pattern = secrets.choice(NFT_PATTERNS)
         db.add(StarTransaction(user_id=owner.id, amount=-cost, title=f"Списание -{cost}⭐️", subtitle=f"Улучшение NFT · уровень {level}"))
         await db.commit()
         return {"ok": True, "stars": int(owner.stars or 0), "gift": gift_public(gift, ug, None, owner), "cost": cost}
@@ -860,8 +920,9 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
             sender_id=sender.id,
             serial=serial,
             upgrade_level=0,
-            backdrop=gift.base_backdrop if gift.is_collectible else "Obsidian",
-            pattern="Classic",
+            backdrop="Без фона" if gift.is_collectible else "Obsidian",
+            pattern="—" if gift.is_collectible else "Classic",
+            model_variant="base" if gift.is_collectible else "base",
         )
         db.add(ug)
 
@@ -2006,9 +2067,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-usernames-info{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
-.nft-bg-purple{background:radial-gradient(circle at 30% 25%,#9b7cff 0,#5b2bbd 34%,#171025 78%)}.nft-bg-blue{background:radial-gradient(circle at 30% 25%,#7db8ff 0,#2458b8 38%,#0c1630 82%)}.nft-bg-emerald{background:radial-gradient(circle at 30% 25%,#76ffc4 0,#168b63 38%,#071b16 82%)}.nft-bg-sunset{background:linear-gradient(145deg,#ffca7a 0,#ff6b5c 42%,#76215c 100%)}.nft-bg-crimson{background:radial-gradient(circle at 30% 25%,#ff7c91 0,#a51d3e 38%,#250b15 82%)}.nft-bg-pink{background:radial-gradient(circle at 30% 25%,#ffd0ef 0,#db5da7 40%,#451a50 82%)}.nft-bg-black{background:radial-gradient(circle at 30% 25%,#59636d 0,#222a31 36%,#07090b 82%)}.nft-bg-gold{background:radial-gradient(circle at 30% 25%,#fff0a8 0,#c58b1d 42%,#3a2505 82%)}.nft-bg-cosmic{background:radial-gradient(circle at 25% 20%,#d1a3ff 0,#6b39bd 28%,#101c48 62%,#050711 100%)}.nft-bg-lagoon{background:radial-gradient(circle at 30% 20%,#b8ffff 0,#36a9b7 36%,#0b2f3d 82%)}
-.nft-bg-purple::before,.nft-bg-blue::before,.nft-bg-emerald::before,.nft-bg-sunset::before,.nft-bg-crimson::before,.nft-bg-pink::before,.nft-bg-black::before,.nft-bg-gold::before,.nft-bg-cosmic::before,.nft-bg-lagoon::before{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.18) 1px,transparent 1.5px);background-size:18px 18px;opacity:.25;z-index:0}
-.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::after{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 35%,rgba(255,255,255,.26),transparent 34%),linear-gradient(120deg,transparent 35%,rgba(255,255,255,.14) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 3.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:62%;height:62%;filter:drop-shadow(0 14px 22px rgba(0,0,0,.55));animation:nftModel 2.7s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-glass{position:absolute;inset:8%;border:1px solid rgba(255,255,255,.12);border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.10),transparent 42%,rgba(0,0,0,.10));z-index:2;pointer-events:none}.nft-sparkle{position:absolute;right:12%;top:10%;z-index:4;color:rgba(255,255,255,.72);font-size:13px;animation:nftSparkle 1.8s ease-in-out infinite;pointer-events:none}@keyframes nftSparkle{0%,100%{opacity:.35;transform:scale(.8) rotate(0deg)}50%{opacity:1;transform:scale(1.2) rotate(18deg)}}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.035)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
+.nft-bg-none{background:transparent}.nft-bg-green{background:linear-gradient(145deg,#35a852,#278d45 48%,#1f7d3b)}.nft-bg-yellow{background:linear-gradient(145deg,#f8d85a,#e8be37 48%,#d8a925)}.nft-bg-blue{background:linear-gradient(145deg,#63b7ef,#4d9fdd 48%,#3d8cc7)}.nft-bg-purple{background:linear-gradient(145deg,#9564dc,#814fcb 48%,#6d43b4)}.nft-bg-beige{background:linear-gradient(145deg,#e6cfaa,#d9bf94 48%,#c9ad7e)}.nft-bg-black{background:linear-gradient(145deg,#25282d,#1f2226 48%,#17191c)}.nft-bg-pink{background:linear-gradient(145deg,#ee82bb,#df69aa 48%,#cb5798)}.nft-bg-red{background:linear-gradient(145deg,#e95d62,#d94b51 48%,#bd3940)}.nft-bg-gold{background:linear-gradient(145deg,#e6c95e,#d6b442 48%,#bf9b2e)}.nft-bg-gray{background:linear-gradient(145deg,#8f979e,#7f878e 48%,#6e767d)}.nft-bg-brown{background:linear-gradient(145deg,#8c5d3a,#774b2e 48%,#653d24)}
+.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::before{content:"";position:absolute;inset:0;background-image:var(--nft-pattern);background-size:58px 58px;background-position:center;opacity:.20;z-index:0}.nft-art::after{content:"";position:absolute;inset:-30%;background:linear-gradient(120deg,transparent 35%,rgba(255,255,255,.10) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 4.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:68%;height:68%;filter:drop-shadow(0 12px 18px rgba(0,0,0,.40));animation:nftModel 3.2s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-glass{position:absolute;inset:8%;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.07),transparent 45%,rgba(0,0,0,.08));z-index:2;pointer-events:none}.nft-sparkle{position:absolute;right:12%;top:10%;z-index:4;color:rgba(255,255,255,.55);font-size:12px;animation:nftSparkle 2.2s ease-in-out infinite;pointer-events:none}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftSparkle{0%,100%{opacity:.30;transform:scale(.9)}50%{opacity:.8;transform:scale(1.08)}}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.025)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
 .gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
 .gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
@@ -3075,81 +3135,60 @@ async function saveProfile(){
 }
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
 function nftBackdropClass(name){
- const map={"Electric Purple":"nft-bg-purple","Royal Blue":"nft-bg-blue","Emerald":"nft-bg-emerald","Sunset":"nft-bg-sunset","Crimson":"nft-bg-crimson","Candy Pink":"nft-bg-pink","Obsidian":"nft-bg-black","Golden":"nft-bg-gold","Cosmic":"nft-bg-cosmic","Glass Lagoon":"nft-bg-lagoon","Neon":"nft-bg-purple","Gothic":"nft-bg-crimson","Royal Gold":"nft-bg-gold"};
- return map[String(name||'Obsidian')]||'nft-bg-black';
+ const map={"Без фона":"nft-bg-none","Зелёный":"nft-bg-green","Жёлтый":"nft-bg-yellow","Голубой":"nft-bg-blue","Фиолетовый":"nft-bg-purple","Бежевый":"nft-bg-beige","Чёрный":"nft-bg-black","Розовый":"nft-bg-pink","Красный":"nft-bg-red","Золотой":"nft-bg-gold","Серый":"nft-bg-gray","Коричневый":"nft-bg-brown"};
+ return map[String(name||'Чёрный')]||'nft-bg-black';
 }
 function nftArt(g,small=false){
  if(!g?.is_collectible) return `<div class="gift-emoji">${g?.emoji||'🎁'}</div>`;
- const code=String(g.model_code||'default');
- const palettes={
-  Pepe:['#8eea63','#23783f'],MidasPepe:['#fff0a1','#a66a08'],DiamondPepe:['#f2ffff','#3f9ed2'],
-  LuckyCat:['#ffd85c','#bf641f'],CyberPanda:['#d7fbff','#6252d9'],NeonFox:['#ffb05d','#d93e8d'],
-  RayfBot:['#d7b9ff','#6336cf'],AlienRayf:['#d7ff9b','#32945c'],MysticEye:['#bffbff','#5a37cf'],
-  RayfCrown:['#fff2a8','#bd8615'],DarkSkull:['#edf1f4','#454b55'],RayfDragon:['#8cffad','#14784a'],
-  MiniPepe:['#9ff17c','#328c4c'],TinyLuckyCat:['#ffe98b','#d5792c'],MiniAlien:['#d7ffa8','#43a75d'],
-  PocketRayfBot:['#ead9ff','#7544ce'],MiniNeonFox:['#ffc080','#df4c91'],LittleRayfCrown:['#fff3af','#b98b20']
- };
- const p=palettes[code]||['#e8edf2','#68727d'];
+ const code=String(g.model_code||'pepe');
+ const variant=String(g.model_variant||'base');
  const uid='n'+String(g.id||Math.random().toString(36).slice(2));
+ const base=variant==='base';
+ const palettes={
+   green:['#83df55','#2f8f42'],silver:['#edf4fa','#7e95a8'],white_cap:['#fffdf5','#c7c2b7'],neon_blue:['#49e7ff','#195bd8'],gold_star:['#ffe98a','#b87a16'],
+   pink:['#ff9bdb','#b83e9a'],blue:['#72c8ff','#2f70d6'],gold:['#ffe681','#b87b12'],black:['#dce2e7','#3b434c'],mint:['#a5f5d2','#2b9c78'],
+   red_gold:['#ff6f6f','#b92d2d'],blue_silver:['#9cdcff','#4d79a8'],green_red:['#8ee878','#bb3838'],purple_silver:['#d6a2ff','#6b42b2'],ice_blue:['#e6fbff','#72b8e8'],
+   white:['#fffdf8','#c8c1b3'],purple:['#c79cff','#6338b5'],red:['#ff7b7b','#b92f39'],orange:['#ffc079','#c9681e'],
+   white_gold:['#fff7d8','#bd8a1d'],silver_blue:['#dff4ff','#6487a8'],
+ };
+ const p=palettes[variant]||palettes[code==='pepe'?'green':'blue'];
+ const escAttr=String(g.pattern||'');
+ const patternMap={"Корона":"👑","Сердце":"♥","Цветок":"✿","Звезда":"✦","Подарок":"□","Алмаз":"◇","Пламя":"♠","Лист":"⌁","Искра":"✧"};
+ const pat=patternMap[escAttr]||'✦';
+ const backdrop=String(g.backdrop||'Без фона');
+ const patternStyle=backdrop==='Без фона'?'':`--nft-pattern:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='58' height='58' viewBox='0 0 58 58'%3E%3Ctext x='29' y='37' text-anchor='middle' font-size='17' fill='white' opacity='.75'%3E${encodeURIComponent(pat)}%3C/text%3E%3C/svg%3E")`;
  const eye=(x,y,s=1)=>`<ellipse cx="${x}" cy="${y}" rx="${8*s}" ry="${11*s}" fill="#101317"/><circle cx="${x-2*s}" cy="${y-3*s}" r="${2.4*s}" fill="#fff"/>`;
- const shine=(x,y)=>`<ellipse cx="${x}" cy="${y}" rx="28" ry="11" fill="#fff" opacity=".16" transform="rotate(-25 ${x} ${y})"/>`;
+ const svgWrap=(shape)=>`<svg viewBox="0 0 200 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="body${uid}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient><filter id="shadow${uid}" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-opacity=".25"/></filter></defs><g filter="url(#shadow${uid})">${shape}</g></svg>`;
  let shape='';
- if(code.includes('Pepe')){
-   shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <ellipse cx="76" cy="76" rx="18" ry="25" fill="#dff6d5"/><ellipse cx="124" cy="76" rx="18" ry="25" fill="#dff6d5"/>
-   ${eye(78,78,.9)}${eye(122,78,.9)}<path d="M69 110Q100 135 131 110" fill="none" stroke="#314a39" stroke-width="8" stroke-linecap="round"/>
-   <path d="M56 55Q100 22 144 55" fill="none" stroke="#fff" opacity=".28" stroke-width="7" stroke-linecap="round"/>`;
- }else if(code.includes('LuckyCat')){
-   shape=`<path d="M47 66L56 27 82 49Q100 39 118 49L144 27 153 66Q158 119 100 148Q42 119 47 66Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M94 101Q100 107 106 101" fill="none" stroke="#7d4b2e" stroke-width="6" stroke-linecap="round"/>
-   <path d="M57 68Q75 45 100 46Q125 45 143 68" fill="none" stroke="#fff" opacity=".3" stroke-width="7"/>`;
- }else if(code.includes('Panda')){
-   shape=`<circle cx="100" cy="91" r="60" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <ellipse cx="72" cy="79" rx="18" ry="27" fill="#171b20" transform="rotate(-25 72 79)"/>
-   <ellipse cx="128" cy="79" rx="18" ry="27" fill="#171b20" transform="rotate(25 128 79)"/>
-   ${eye(76,82,.8)}${eye(124,82,.8)}<path d="M87 111Q100 122 113 111" fill="none" stroke="#171b20" stroke-width="7" stroke-linecap="round"/>
-   <path d="M61 62Q100 33 139 62" fill="none" stroke="#fff" opacity=".25" stroke-width="8" stroke-linecap="round"/>`;
- }else if(code.includes('Fox')){
-   shape=`<path d="M43 72L55 28 84 49Q100 42 116 49L145 28 157 72Q154 122 100 150Q46 122 43 72Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <path d="M68 94Q100 113 132 94Q126 133 100 140Q74 133 68 94Z" fill="#fff4e9"/>
-   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M58 64Q100 37 142 64" fill="none" stroke="#fff" opacity=".28" stroke-width="7"/>`;
- }else if(code.includes('Bot')){
-   shape=`<rect x="45" y="48" width="110" height="92" rx="28" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <circle cx="100" cy="31" r="9" fill="${p[1]}"/><path d="M100 31V17" stroke="${p[1]}" stroke-width="6" stroke-linecap="round"/>
-   <rect x="59" y="62" width="82" height="55" rx="19" fill="#11151b" opacity=".18"/>
-   ${eye(78,84,.7)}${eye(122,84,.7)}<path d="M77 108Q100 123 123 108" fill="none" stroke="#403259" stroke-width="7" stroke-linecap="round"/>
-   ${shine(82,60)}`;
- }else if(code.includes('Alien')){
-   shape=`<ellipse cx="100" cy="90" rx="62" ry="73" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <ellipse cx="75" cy="83" rx="19" ry="29" fill="#12231b"/><ellipse cx="125" cy="83" rx="19" ry="29" fill="#12231b"/>
-   <circle cx="76" cy="80" r="6" fill="#fff"/><circle cx="124" cy="80" r="6" fill="#fff"/>
-   <path d="M79 116Q100 128 121 116" fill="none" stroke="#2c6838" stroke-width="7" stroke-linecap="round"/>
-   <path d="M62 52Q100 25 138 52" fill="none" stroke="#fff" opacity=".26" stroke-width="8" stroke-linecap="round"/>`;
- }else if(code.includes('Eye')){
-   shape=`<ellipse cx="100" cy="92" rx="70" ry="47" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>
-   <circle cx="100" cy="92" r="28" fill="#efffff" stroke="#17222a" stroke-width="6"/>
-   <circle cx="100" cy="92" r="11" fill="#101317"/><circle cx="96" cy="88" r="3" fill="#fff"/>`;
- }else if(code.includes('Crown')){
-   shape=`<path d="M42 121L51 52 80 83 100 40 120 83 149 52 158 121Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>
-   <rect x="47" y="118" width="106" height="28" rx="10" fill="${p[1]}"/>
-   <circle cx="51" cy="53" r="5" fill="#fff"/><circle cx="100" cy="41" r="5" fill="#fff"/><circle cx="149" cy="53" r="5" fill="#fff"/>`;
- }else if(code.includes('Skull')){
-   shape=`<path d="M44 87Q44 32 100 32T156 87Q156 120 130 131V150H112V135H88V150H70V131Q44 120 44 87Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   <ellipse cx="76" cy="88" rx="16" ry="20" fill="#101317"/><ellipse cx="124" cy="88" rx="16" ry="20" fill="#101317"/>
-   <path d="M92 110L100 97 108 110" fill="#101317"/><path d="M61 61Q100 35 139 61" fill="none" stroke="#fff" opacity=".22" stroke-width="7"/>`;
- }else if(code.includes('Dragon')){
-   shape=`<path d="M43 119Q30 73 62 49L50 25 83 42Q100 31 117 42L150 25 138 49Q170 73 157 119Q141 149 100 155Q59 149 43 119Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
-   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M70 112Q100 132 130 112" fill="none" stroke="#164e32" stroke-width="7" stroke-linecap="round"/>
-   <path d="M57 59Q100 30 143 59" fill="none" stroke="#fff" opacity=".24" stroke-width="7"/>`;
- }else{
-   shape=`<circle cx="100" cy="91" r="59" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>${eye(78,84,.8)}${eye(122,84,.8)}${shine(82,58)}`;
- }
- const svg=`<svg viewBox="0 0 200 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
- <defs><linearGradient id="body${uid}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${p[0]}"/><stop offset=".55" stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient>
- <filter id="shadow${uid}" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-opacity=".35"/></filter></defs>
- <g filter="url(#shadow${uid})">${shape}</g></svg>`;
- const pattern=String(g.pattern||'Classic');
- return `<div class="nft-art ${nftBackdropClass(g.backdrop)}" title="${esc(g.name)}"><div class="nft-model">${svg}</div><div class="nft-glass"></div><div class="nft-sparkle">✦</div><div style="position:absolute;left:9px;bottom:8px;z-index:3;font-size:9px;color:#ffffffb8;font-weight:800">${esc(pattern)}</div></div>`;
+ if(code==='pepe'){
+   if(base) shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><ellipse cx="76" cy="76" rx="18" ry="25" fill="#dff6d5"/><ellipse cx="124" cy="76" rx="18" ry="25" fill="#dff6d5"/>${eye(78,78,.9)}${eye(122,78,.9)}<path d="M58 108Q100 135 142 108" fill="none" stroke="#e94b4b" stroke-width="12" stroke-linecap="round"/><path d="M58 55Q100 22 144 55" fill="none" stroke="#fff" opacity=".22" stroke-width="7" stroke-linecap="round"/><path d="M72 111Q100 124 128 111" fill="none" stroke="#7b2027" stroke-width="4"/>`;
+   else if(variant==='silver') shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><circle cx="76" cy="76" r="19" fill="#d7e0e8" stroke="#8295a5" stroke-width="6"/><circle cx="124" cy="76" r="19" fill="#d7e0e8" stroke="#8295a5" stroke-width="6"/>${eye(78,78,.75)}${eye(122,78,.75)}<path d="M61 110Q100 134 139 110" fill="none" stroke="#b7c8d6" stroke-width="13" stroke-linecap="round"/>`;
+   else if(variant==='white_cap') shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>${eye(78,76,.9)}${eye(122,76,.9)}<path d="M60 108Q100 132 140 108" fill="none" stroke="#ef4fae" stroke-width="12" stroke-linecap="round"/><path d="M82 35Q100 20 118 35L113 51H87Z" fill="#f32929" stroke="#a9151b" stroke-width="5"/><path d="M72 33Q100 12 128 33" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>`;
+   else if(variant==='neon_blue') shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="#1f56f5" stroke-width="8"/>${eye(78,76,.9)}${eye(122,76,.9)}<path d="M61 110Q100 134 139 110" fill="none" stroke="#72f5ff" stroke-width="11" stroke-linecap="round"/><path d="M58 56Q100 22 142 56" fill="none" stroke="#b4ffff" opacity=".6" stroke-width="7"/>`;
+   else shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="#9a6810" stroke-width="6"/>${eye(78,76,.9)}${eye(122,76,.9)}<path d="M61 110Q100 134 139 110" fill="none" stroke="#7f281d" stroke-width="12" stroke-linecap="round"/><g fill="#fff2a0"><path d="M68 54l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/><path d="M134 58l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/><path d="M100 42l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></g>`;
+ } else if(code==='digital_pet') shape=`<rect x="48" y="42" width="104" height="105" rx="24" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><circle cx="100" cy="31" r="8" fill="${p[1]}"/><path d="M100 31V18" stroke="${p[1]}" stroke-width="5"/><rect x="62" y="61" width="76" height="55" rx="13" fill="#15202b" opacity=".35"/><path d="M77 88h46" stroke="#fff" opacity=".45" stroke-width="4"/><circle cx="82" cy="102" r="5" fill="#fff"/><circle cx="100" cy="102" r="5" fill="#fff"/><circle cx="118" cy="102" r="5" fill="#fff"/><circle cx="67" cy="135" r="5" fill="#fff" opacity=".7"/><circle cx="133" cy="135" r="5" fill="#fff" opacity=".7"/>`;
+ else if(code==='bells') shape=`<path d="M45 61Q55 38 76 42L100 63 124 42Q145 38 155 61L143 116H57Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M60 62Q70 49 84 61L94 106H54Z" fill="${p[0]}"/><path d="M140 62Q130 49 116 61L106 106H146Z" fill="${p[1]}" opacity=".65"/><path d="M54 117Q100 140 146 117" fill="none" stroke="#fff" opacity=".35" stroke-width="6"/><circle cx="75" cy="118" r="8" fill="#f7d56d"/><circle cx="125" cy="118" r="8" fill="#f7d56d"/>`;
+ else if(code==='snow_globe') shape=`<circle cx="100" cy="83" r="58" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M63 108Q100 82 137 108V118H63Z" fill="#fff" opacity=".8"/><path d="M75 100V80L100 60 125 80V100Z" fill="#fff" opacity=".9"/><path d="M83 100V87H95V100M105 100V87H117V100" stroke="${p[1]}" stroke-width="5"/><circle cx="100" cy="83" r="4" fill="#f7d56d"/><path d="M56 143H144" stroke="${p[1]}" stroke-width="14" stroke-linecap="round"/>`;
+ else if(code==='ice_cauldron') shape=`<path d="M45 75Q45 52 100 52T155 75L145 132Q100 158 55 132Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M49 73Q100 91 151 73" fill="none" stroke="#dffaff" stroke-width="10"/><circle cx="100" cy="69" r="18" fill="#dffaff" opacity=".9"/>${eye(100,69,.55)}<path d="M58 58l10-16 9 15M132 57l10-16 9 16" stroke="#dffaff" stroke-width="7" stroke-linecap="round"/>`;
+ else if(code==='moon_smile') shape=`<circle cx="100" cy="90" r="60" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>${eye(77,78,.7)}${eye(123,78,.7)}<path d="M67 108Q100 128 133 108" fill="none" stroke="#303747" stroke-width="7" stroke-linecap="round"/><path d="M80 57Q100 44 120 57" stroke="#fff" opacity=".25" stroke-width="7" stroke-linecap="round"/>`;
+ else if(code==='mystery_box') shape=`<path d="M45 70L100 48 155 70 100 96Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M45 70V122L100 149V96ZM155 70V122L100 149V96Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M76 58Q100 38 124 58" fill="none" stroke="#fff" opacity=".55" stroke-width="7"/><path d="M100 72V134" stroke="#fff" opacity=".45" stroke-width="6"/><circle cx="100" cy="72" r="9" fill="#fff" opacity=".5"/>`;
+ else if(code==='death_flower') shape=`<g fill="url(#body${uid})" stroke="${p[1]}" stroke-width="5"><ellipse cx="100" cy="54" rx="18" ry="35"/><ellipse cx="100" cy="126" rx="18" ry="35"/><ellipse cx="64" cy="90" rx="35" ry="18"/><ellipse cx="136" cy="90" rx="35" ry="18"/><ellipse cx="75" cy="65" rx="22" ry="30" transform="rotate(-45 75 65)"/><ellipse cx="125" cy="65" rx="22" ry="30" transform="rotate(45 125 65)"/></g><circle cx="100" cy="90" r="28" fill="#f2f2f2" stroke="#252a30" stroke-width="6"/><ellipse cx="90" cy="88" rx="6" ry="9" fill="#171a1e"/><ellipse cx="110" cy="88" rx="6" ry="9" fill="#171a1e"/><path d="M95 100l5-8 5 8" fill="#171a1e"/>`;
+ else if(code==='ghost_box') shape=`<path d="M48 79L100 57 152 79V132L100 151 48 132Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M60 74Q64 43 82 52Q92 25 105 51Q126 33 138 62Q146 64 145 82" fill="#dffbff" opacity=".9" stroke="${p[1]}" stroke-width="4"/><circle cx="86" cy="73" r="6" fill="#17212b"/><circle cx="114" cy="73" r="6" fill="#17212b"/><text x="100" y="116" text-anchor="middle" font-size="18" font-weight="900" fill="#fff">RIP</text>`;
+ else if(code==='record_player') shape=`<path d="M45 78L100 55 155 78V132L100 151 45 132Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><ellipse cx="100" cy="100" rx="38" ry="25" fill="#171a1f" opacity=".9"/><ellipse cx="100" cy="100" rx="12" ry="12" fill="#ddd"/><path d="M123 79L143 61" stroke="#fff" stroke-width="6" stroke-linecap="round"/><circle cx="143" cy="61" r="7" fill="#fff"/><path d="M67 75l8 8 12-3" stroke="#fff" stroke-width="5" fill="none"/>`;
+ else if(code==='flower') shape=`<g fill="url(#body${uid})" stroke="${p[1]}" stroke-width="5"><ellipse cx="100" cy="56" rx="20" ry="34"/><ellipse cx="100" cy="124" rx="20" ry="34"/><ellipse cx="66" cy="90" rx="34" ry="20"/><ellipse cx="134" cy="90" rx="34" ry="20"/><ellipse cx="76" cy="66" rx="22" ry="30" transform="rotate(-45 76 66)"/><ellipse cx="124" cy="66" rx="22" ry="30" transform="rotate(45 124 66)"/></g><circle cx="100" cy="90" r="19" fill="#fff0a8" stroke="${p[1]}" stroke-width="5"/>`;
+ else if(code==='cake') shape=`<path d="M55 88H145V128Q100 151 55 128Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M55 88Q100 64 145 88Q100 111 55 88Z" fill="#fff4f0" stroke="${p[1]}" stroke-width="5"/><path d="M72 61V44M100 58V41M128 61V44" stroke="#5b3824" stroke-width="5" stroke-linecap="round"/><path d="M68 40q4-12 8 0M96 37q4-12 8 0M124 40q4-12 8 0" stroke="#ffc63d" stroke-width="6" fill="none"/>`;
+ else if(code==='birthday_plaque') shape=`<path d="M45 65Q100 42 155 65V128Q100 150 45 128Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><text x="100" y="91" text-anchor="middle" font-size="21" font-weight="900" fill="#fff">HAPPY</text><text x="100" y="118" text-anchor="middle" font-size="25" font-weight="900" fill="#fff">B-DAY</text><path d="M78 55Q100 37 122 55" fill="none" stroke="#fff" opacity=".35" stroke-width="6"/>`;
+ else if(code==='magic_wand') shape=`<path d="M58 128L133 53" stroke="url(#body${uid})" stroke-width="18" stroke-linecap="round"/><path d="M133 53Q100 48 118 28Q130 45 151 37Q145 60 133 53Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="5"/><path d="M69 111l4-9 9-4-9-4-4-9-4 9-9 4 9 4zM112 72l3-7 7-3-7-3-3-7-3 7-7 3 7 3z" fill="#fff"/>`;
+ else if(code==='bday_calendar') shape=`<rect x="48" y="47" width="104" height="102" rx="13" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><rect x="48" y="47" width="104" height="27" rx="13" fill="#fff" opacity=".18"/><path d="M70 39V57M130 39V57" stroke="#fff" stroke-width="7" stroke-linecap="round"/><text x="100" y="108" text-anchor="middle" font-size="28" font-weight="900" fill="#fff">B-DAY</text>`;
+ else if(code==='santa_hat') shape=`<path d="M51 126Q58 72 105 45Q123 34 136 23Q141 52 132 72Q147 92 151 126Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M51 126Q100 110 151 126V145H51Z" fill="#fff" stroke="#ddd" stroke-width="5"/><circle cx="137" cy="24" r="12" fill="#fff" stroke="#ddd" stroke-width="5"/>`;
+ else if(code==='rayf_star') shape=`<path d="M100 28L116 68 159 70 126 96 137 139 100 116 63 139 74 96 41 70 84 68Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>`;
+ else if(code==='rayf_gift') shape=`<rect x="48" y="60" width="104" height="80" rx="12" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/><path d="M100 60V140M48 85H152" stroke="#fff" opacity=".65" stroke-width="7"/><path d="M100 60Q78 30 68 50Q63 61 80 66M100 60Q122 30 132 50Q137 61 120 66" fill="none" stroke="#fff" stroke-width="6"/>`;
+ else if(code==='rayf_heart') shape=`<path d="M100 145C82 126 45 104 45 72C45 49 72 39 89 57L100 69 111 57C128 39 155 49 155 72C155 104 118 126 100 145Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>`;
+ else shape=`<circle cx="100" cy="90" r="55" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>`;
+ const svg=svgWrap(shape);
+ const bgClass=nftBackdropClass(backdrop);
+ const style=patternStyle?` style='${patternStyle}'`:'';
+ return `<div class="nft-art ${bgClass}"${style} title="${esc(g.name)}"><div class="nft-model">${svg}</div>${backdrop!=='Без фона'?'<div class="nft-glass"></div><div class="nft-sparkle">✦</div>':''}${backdrop!=='Без фона'&&escAttr?`<div style="position:absolute;left:9px;bottom:8px;z-index:3;font-size:9px;color:#ffffff99;font-weight:800">${esc(escAttr)}</div>`:''}</div>`;
 }
 
 async function showProfileGifts(userId, username){
@@ -3177,12 +3216,12 @@ function openGiftDetails(g){
   const owner=g.owner_username?'@'+g.owner_username:'@user';
   const isOwner=me && Number(g.owner_id)===Number(me.id);
   const level=Number(g.upgrade_level||0);
-  const upgradeCost=g.is_collectible?Math.max(100,Math.round((Number(g.price_stars||0)*(level+1)*0.05)/50)*50):0;
-  const upgradeButton=isOwner&&g.is_collectible&&level<3?`<button class="gift-send-pill nft-upgrade-btn" onclick="upgradeNft(${Number(g.owner_gift_id)},${upgradeCost})">✨ Улучшить за ${upgradeCost}⭐️</button>`:'';
+  const upgradeCost=g.is_collectible?125:0;
+  const upgradeButton=isOwner&&g.is_collectible&&level===0?`<button class="gift-send-pill nft-upgrade-btn" onclick="upgradeNft(${Number(g.owner_gift_id)},${upgradeCost})">✨ Улучшить за ${upgradeCost}⭐️</button>`:'';
   const transferButton=isOwner&&g.is_collectible?`<button class="gift-send-pill" onclick="transferNft(${Number(g.owner_gift_id)})">↗️ Передать за 25⭐️</button>`:'';
   const marketButton=isOwner&&g.is_collectible&&level>0?`<button class="gift-send-pill" onclick="listNftOnMarket(${Number(g.owner_gift_id)})">🏪 Выставить на рынок</button>`:'';
   const art=g.is_collectible?nftArt(g):`<div class="gift-detail-art">${g.emoji}</div>`;
-  openDrawer(`<div class="gift-detail">${art}<div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.is_collectible?`<div class="nft-attrs"><span class="nft-attr">Уровень ${level}</span><span class="nft-attr">${esc(g.backdrop||g.base_backdrop)}</span><span class="nft-attr">${esc(g.pattern||'Classic')}</span></div>`:''}${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время:</span><span>${esc(time)}</span></div>${g.is_collectible?`<div class="gift-detail-row"><span>Коллекция:</span><span>RayfGram Collectibles</span></div>`:''}</div>${upgradeButton}${marketButton}${transferButton}<button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+  openDrawer(`<div class="gift-detail">${art}<div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.is_collectible?`<div class="nft-attrs"><span class="nft-attr">${level?'Улучшен':'Базовый'}</span><span class="nft-attr">${esc(g.backdrop||'Без фона')}</span><span class="nft-attr">${esc(g.pattern||'—')}</span></div>`:''}${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время:</span><span>${esc(time)}</span></div>${g.is_collectible?`<div class="gift-detail-row"><span>Коллекция:</span><span>RayfGram Collectibles</span></div>`:''}</div>${upgradeButton}${marketButton}${transferButton}<button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
 }
 async function upgradeNft(userGiftId,cost){
  try{if(!confirm(`Улучшить NFT за ${cost}⭐️?`))return;const fd=new FormData();fd.append('user_gift_id',String(Number(userGiftId)));const d=await api('/api/nft/upgrade',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast(`✨ NFT улучшен до уровня ${d.gift.upgrade_level}`);openGiftDetails(d.gift);}catch(e){showToast(e.message)}
@@ -3196,7 +3235,7 @@ async function transferNft(userGiftId){
  try{const fd=new FormData();fd.append('user_gift_id',String(Number(userGiftId)));fd.append('username',username);const d=await api('/api/nft/transfer',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast(`↗️ NFT передан @${d.recipient} за 25⭐️`);closeDrawer();if(typeof openProfile==='function')openProfile();}catch(e){showToast(e.message)}
 }
 async function openNftMarket(){
- try{const rows=await api('/api/nft/market');const cards=rows.map((g,i)=>`<div class="nft-market-card" style="animation-delay:${Math.min(i,10)*.04}s"><div class="nft-badge">#${g.serial}</div>${nftArt(g,true)}<div class="gift-name" style="margin-top:8px">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)} · Lv.${g.upgrade_level}</div><div class="nft-attrs"><span class="nft-attr">${esc(g.backdrop)}</span><span class="nft-attr">${esc(g.pattern)}</span></div><div class="nft-market-price">${Number(g.market_price)} ⭐</div><div style="color:#7f8b96;font-size:11px;margin-top:3px">@${esc(g.seller_username)}</div><button class="save" onclick="buyNft(${Number(g.listing_id)},${Number(g.market_price)})">Купить</button></div>`).join('');openDrawer(`<h2>🏪 Рынок</h2><div style="color:#8d8d8d;font-size:12px;margin-bottom:10px">Здесь продаются только улучшенные NFT от реальных пользователей.</div><div class="nft-market-grid">${cards||'<div class="gift-empty" style="grid-column:1/-1">На рынке пока нет NFT</div>'}</div>`);}catch(e){showToast(e.message)}
+ try{const rows=await api('/api/nft/market');const cards=rows.map((g,i)=>`<div class="nft-market-card" style="animation-delay:${Math.min(i,10)*.04}s"><div class="nft-badge">#${g.serial}</div>${nftArt(g,true)}<div class="gift-name" style="margin-top:8px">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)} · ${g.upgrade_level?'Улучшен':'Базовый'}</div><div class="nft-attrs"><span class="nft-attr">${esc(g.backdrop)}</span><span class="nft-attr">${esc(g.pattern)}</span></div><div class="nft-market-price">${Number(g.market_price)} ⭐</div><div style="color:#7f8b96;font-size:11px;margin-top:3px">@${esc(g.seller_username)}</div><button class="save" onclick="buyNft(${Number(g.listing_id)},${Number(g.market_price)})">Купить</button></div>`).join('');openDrawer(`<h2>🏪 Рынок</h2><div style="color:#8d8d8d;font-size:12px;margin-bottom:10px">Здесь продаются только улучшенные NFT от реальных пользователей.</div><div class="nft-market-grid">${cards||'<div class="gift-empty" style="grid-column:1/-1">На рынке пока нет NFT</div>'}</div>`);}catch(e){showToast(e.message)}
 }
 async function buyNft(listingId,price){
  try{if(!confirm(`Купить NFT за ${price}⭐️?`))return;const fd=new FormData();fd.append('listing_id',String(Number(listingId)));const d=await api('/api/nft/market/buy',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast('🎉 NFT куплен');openNftMarket();}catch(e){showToast(e.message)}
