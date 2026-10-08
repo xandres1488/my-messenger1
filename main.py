@@ -1722,6 +1722,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .file{display:block;margin:4px 0;color:#fff;text-decoration:none;background:#ffffff14;border-radius:8px;padding:9px}.file:hover{background:#ffffff22}
 .composer{display:flex;gap:7px;padding:9px 12px;background:#17212b;border-top:1px solid #253442;align-items:flex-end}.attach{font-size:22px}.composer textarea{flex:1;resize:none;max-height:120px;border:0;background:#0e1621;color:#fff;border-radius:12px;padding:11px;outline:0}.send{background:#2aabee;color:#fff;border-radius:12px;padding:11px 16px;font-weight:700}
 .context{position:fixed;background:#17212b;border:1px solid #2d4150;border-radius:12px;box-shadow:0 10px 35px #0008;padding:6px;z-index:20}.context button{display:block;background:none;color:#fff;padding:10px 15px;width:150px;text-align:left;border-radius:8px}.context button:hover{background:#223442}
+.story-fullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;border-radius:0!important;padding:0!important;background:#050607!important;overflow:hidden!important}.story-fullscreen .story-viewer{min-height:100vh!important;height:100vh!important;width:100vw!important;padding:14px!important;box-sizing:border-box!important;gap:8px!important}.story-fullscreen .story-stage{width:100vw!important;height:calc(100vh - 90px)!important;max-width:none!important;max-height:none!important;border-radius:0!important}.story-fullscreen .story-media{max-width:100vw!important;max-height:calc(100vh - 90px)!important}.story-fullscreen .gift-done{position:absolute!important;right:14px!important;top:14px!important;z-index:4!important;background:#171717!important;border:1px solid #333!important;color:#fff!important;border-radius:12px!important;padding:8px 12px!important}
 .drawer{position:fixed;inset:0;background:#0008;z-index:10}.panel{position:absolute;right:0;top:0;height:100%;width:min(420px,92%);background:#17212b;padding:18px;overflow:auto}.panel h2{margin-top:0}.close{float:right}.profile-big{display:grid;place-items:center;margin:20px}.profile-big .avatar{width:110px;height:110px;font-size:32px}
 .verified-badge{display:inline-flex;vertical-align:middle;align-items:center;justify-content:center;width:19px;height:19px;margin-left:5px;border-radius:50%;background:#2aabee;color:#fff;font-size:13px;font-weight:900;line-height:19px;position:relative;box-shadow:0 0 0 1px #0e1621}
 .verified-badge::after{content:"✓";position:absolute;left:0;top:0;width:19px;height:19px;text-align:center;line-height:19px;color:#fff;font-size:13px;font-weight:900}
@@ -1825,7 +1826,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 
 .top-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;white-space:nowrap}
 .top-actions .icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;min-width:36px;margin:0;padding:0}
-.top-plus{font-size:27px!important;font-weight:300!important;line-height:1!important;border-radius:12px!important;background:#171717!important;border:1px solid #2b2b2b!important}
+.top-plus{font-size:27px!important;font-weight:300!important;line-height:1!important;border-radius:12px!important;background:#171717!important;border:1px solid #222!important}
 .top-plus:active{transform:scale(.9)!important}
 @media(max-width:700px){.top-actions{gap:2px}.top-actions .icon{width:34px;height:34px;min-width:34px}.top-plus{font-size:26px!important}}
 .story-camera-wrap{display:flex;justify-content:center;align-items:center;padding:8px 10px 4px}
@@ -1850,6 +1851,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  .bottom-nav button.active{background:#353b43;color:#fff}
  .bottom-nav .nav-ico{display:block;font-size:22px;line-height:22px;margin-bottom:2px}
 }
+
+.upload-progress{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}.upload-progress-box{width:min(330px,82vw);background:#151515;border:1px solid #2b2b2b;border-radius:18px;padding:20px;box-sizing:border-box;text-align:center;color:#fff}.upload-spinner{width:34px;height:34px;border:3px solid #303030;border-top-color:#fff;border-radius:50%;margin:0 auto 14px;animation:rgSpin .8s linear infinite}.upload-progress-title{font-size:16px;font-weight:700;margin-bottom:8px}.upload-progress-sub{font-size:13px;color:#969696}.upload-bar{height:5px;background:#292929;border-radius:8px;overflow:hidden;margin-top:15px}.upload-bar i{display:block;width:35%;height:100%;background:#fff;border-radius:8px;animation:rgUpload 1.1s ease-in-out infinite}@keyframes rgSpin{to{transform:rotate(360deg)}}@keyframes rgUpload{0%{transform:translateX(-110%)}100%{transform:translateX(310%)}}
 
 /* ===== RayfGram Black & Gray Theme + Motion Pack ===== */
 :root{
@@ -2728,13 +2731,15 @@ async function uploadStory(){
   if(f.size>8*1024*1024){showToast('Сторис максимум 8 МБ');$('storyPick').value='';return}
   if(!(f.type.startsWith('image/')||f.type.startsWith('video/'))){showToast('Можно выбрать только фото или видео');$('storyPick').value='';return}
   try{
+    const progress=document.createElement('div');progress.className='upload-progress';progress.innerHTML='<div class=\"upload-progress-box\"><div class=\"upload-spinner\"></div><div class=\"upload-progress-title\">Загрузка сторис…</div><div class=\"upload-progress-sub\">Видео загружается, не закрывай страницу</div><div class=\"upload-bar\"><i></i></div></div>';document.body.appendChild(progress);
     const fd=new FormData();fd.append('file',f);
     await api('/api/stories',{method:'POST',body:fd});
+    progress.remove();
     $('storyPick').value='';
     await loadStorySummary();
     showToast('Сторис опубликована на 24 часа');
     if(!$('drawer').classList.contains('hidden'))openProfile();
-  }catch(e){showToast(e.message||'Не удалось опубликовать сторис');$('storyPick').value=''}
+  }catch(e){document.querySelector('.upload-progress')?.remove();showToast(e.message||'Не удалось опубликовать сторис');$('storyPick').value=''}
 }
 async function openStoryViewer(userId,username){
   try{
@@ -2752,7 +2757,7 @@ function renderStoryViewer(username){
   const prev=storyViewerIndex>0?`<button class="story-nav story-prev" onclick="storyViewerIndex--;renderStoryViewer('${esc(username)}')">‹</button>`:'';
   const next=storyViewerIndex<storyViewerItems.length-1?`<button class="story-nav story-next" onclick="storyViewerIndex++;renderStoryViewer('${esc(username)}')">›</button>`:'';
   const when=new Date(s.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  openDrawer(`<div class="story-viewer"><div class="story-viewer-top"><b>@${esc(username)}</b><span>${storyViewerIndex+1}/${storyViewerItems.length} · ${when}</span></div><div class="story-progress">${storyViewerItems.map((_,i)=>`<span class="${i<=storyViewerIndex?'on':''}"></span>`).join('')}</div><div class="story-stage">${media}${prev}${next}</div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+  openDrawer(`<div class="story-viewer story-viewer-full"><div class="story-viewer-top"><b>@${esc(username)}</b><span>${storyViewerIndex+1}/${storyViewerItems.length} · ${when}</span></div><div class="story-progress">${storyViewerItems.map((_,i)=>`<span class="${i<=storyViewerIndex?'on':''}"></span>`).join('')}</div><div class="story-stage">${media}${prev}${next}</div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);document.querySelector('#drawer .panel')?.classList.add('story-fullscreen');
 }
 
 function openProfile(){
