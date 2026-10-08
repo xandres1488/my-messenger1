@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func, text
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -170,6 +170,12 @@ class GiftCatalog(Base):
     description: Mapped[str] = mapped_column(String(240), default="")
 
 
+class GiftSystemMeta(Base):
+    __tablename__ = "gift_system_meta"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class PromoCode(Base):
     __tablename__ = "promo_codes"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -264,7 +270,6 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
         await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
         await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -286,7 +291,10 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
+        # Старые проблемные индексы удаляем, но заново не создаём: они раньше могли
+        # ломать запуск на существующей PostgreSQL-базе при дубликатах.
+        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_groups_username")
+        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_user_gift_serial")
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
@@ -296,50 +304,42 @@ async def init_db():
             seed_db.add(PromoCode(code="DEVELOPER9933551010", stars=9999999, active=True))
             await seed_db.commit()
 
-        # Полная миграция подарков v2: старые подарки и каталоги удаляются ОДИН раз.
-        # Сообщения о ранее отправленных подарках специально НЕ удаляем.
-        await seed_db.execute(text("""
-            CREATE TABLE IF NOT EXISTS gift_system_meta (
-                id INTEGER PRIMARY KEY,
-                version INTEGER NOT NULL
-            )
-        """))
-        meta = await seed_db.scalar(text("SELECT version FROM gift_system_meta WHERE id = 1"))
-        if meta != 2:
-            await seed_db.execute(text("DELETE FROM user_gifts"))
-            await seed_db.execute(text("DELETE FROM gift_catalog"))
-            await seed_db.execute(text("DELETE FROM gift_system_meta WHERE id = 1"))
-            await seed_db.execute(text("INSERT INTO gift_system_meta (id, version) VALUES (1, 2)"))
+        # Полный одноразовый сброс старой системы подарков.
+        # Сообщения __RAYFGIFT__ намеренно НЕ удаляем: история чатов сохраняется.
+        GIFT_SYSTEM_VERSION = 3
+        meta = await seed_db.get(GiftSystemMeta, 1)
+        if not meta or int(meta.version or 0) != GIFT_SYSTEM_VERSION:
+            await seed_db.execute(UserGift.__table__.delete())
+            await seed_db.execute(GiftCatalog.__table__.delete())
+            if meta:
+                meta.version = GIFT_SYSTEM_VERSION
+            else:
+                seed_db.add(GiftSystemMeta(id=1, version=GIFT_SYSTEM_VERSION))
             await seed_db.commit()
 
         existing = await seed_db.scalar(select(GiftCatalog).limit(1))
         if not existing:
             seed_db.add_all([
-                GiftCatalog(code="heart", name="Сердечко", emoji="💝", rarity="Обычный", collection="RayfGram Gifts", price_stars=15, description="Маленький тёплый подарок."),
-                GiftCatalog(code="teddy", name="Мишка", emoji="🧸", rarity="Обычный", collection="RayfGram Gifts", price_stars=15, description="Милый подарок для близкого человека."),
+                GiftCatalog(code="heart", name="Сердечко", emoji="💝", rarity="Обычный", collection="RayfGram Gifts", price_stars=15, description="Тёплый знак внимания."),
+                GiftCatalog(code="teddy", name="Мишка", emoji="🧸", rarity="Обычный", collection="RayfGram Gifts", price_stars=15, description="Милый подарок."),
                 GiftCatalog(code="present", name="Подарок", emoji="🎁", rarity="Обычный", collection="RayfGram Gifts", price_stars=25, description="Классический подарок."),
                 GiftCatalog(code="rose", name="Роза", emoji="🌹", rarity="Обычный", collection="RayfGram Gifts", price_stars=25, description="Красивый знак внимания."),
                 GiftCatalog(code="ring", name="Кольцо", emoji="💍", rarity="Редкий", collection="RayfGram Gifts", price_stars=100, description="Особенный подарок."),
-                GiftCatalog(code="champagne", name="Вино", emoji="🍾", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Праздничный подарок."),
+                GiftCatalog(code="wine", name="Вино", emoji="🍾", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Праздничный подарок."),
                 GiftCatalog(code="diamond", name="Алмаз", emoji="💎", rarity="Редкий", collection="RayfGram Gifts", price_stars=100, description="Блестящий подарок."),
                 GiftCatalog(code="cake", name="Торт", emoji="🎂", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Для праздника."),
                 GiftCatalog(code="rocket", name="Ракета", emoji="🚀", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Подарок для больших мечтаний."),
                 GiftCatalog(code="bouquet", name="Букет", emoji="💐", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Цветы без повода."),
                 GiftCatalog(code="crown", name="Корона", emoji="👑", rarity="Легендарный", collection="RayfGram Gifts", price_stars=777, description="Подарок для настоящей легенды."),
-                GiftCatalog(code="flower", name="Цветок", emoji="🌺", rarity="Эпический", collection="RayfGram Gifts", price_stars=1500, description="Редкий цветочный подарок."),
+                GiftCatalog(code="flower", name="Цветок", emoji="🌺", rarity="Эпический", collection="RayfGram Gifts", price_stars=1500, description="Особенный цветочный подарок."),
                 GiftCatalog(code="fallen_rose", name="Павшая роза", emoji="🥀", rarity="Мифический", collection="RayfGram Gifts", price_stars=50000, description="Самый редкий подарок коллекции."),
             ])
             await seed_db.commit()
 
 
-
 @app.on_event("startup")
 async def startup():
-    try:
-        await init_db()
-    except Exception as exc:
-        print("RAYFGRAM STARTUP DATABASE ERROR:", repr(exc), flush=True)
-        raise
+    await init_db()
 
 
 def make_token(user_id: int) -> str:
@@ -684,7 +684,6 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
             "stars": int(sender.stars or 0),
             "message_id": gift_message.id,
         }
-
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -1744,10 +1743,11 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-usernames-info{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
 .gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.gift-store-head{padding:4px 2px 10px}.gift-store-title{font-size:24px;font-weight:900;letter-spacing:-.3px}.gift-store-subtitle{margin-top:4px;color:#8b96a1;font-size:13px}.gift-card{min-width:0;overflow:hidden}.gift-card .gift-emoji{font-size:50px;margin-top:2px}.gift-card .gift-price{font-size:15px}
 .gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
 .gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
 .gift-card .gift-name{font-weight:800;margin-top:7px;font-size:14px}
-.gift-card .gift-rarity{display:none}
+.gift-card .gift-rarity{font-size:11px;color:#aeb8c2;margin-top:3px}
 .gift-card .gift-price{font-size:13px;color:#ffd76a;margin-top:6px;font-weight:800}
 .gift-card button{width:100%;margin-top:9px;border:0;border-radius:11px;padding:9px;background:#2aabee;color:#fff;font-weight:800}
 .gift-serial{font-size:11px;color:#7f8b96;margin-top:4px}
@@ -1759,7 +1759,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-gift-card:active{transform:scale(.97)}
 .profile-gift-card .gift-emoji{font-size:48px;line-height:1.08;filter:drop-shadow(0 5px 10px #0008)}
 .profile-gift-card .gift-name{font-weight:800;margin-top:7px;font-size:14px}
-.profile-gift-card .gift-rarity{display:none}
+.profile-gift-card .gift-rarity{font-size:11px;color:#aeb8c2;margin-top:3px}
 .profile-gift-card .gift-serial{font-size:11px;color:#7f8b96;margin-top:4px}
 .gift-detail{animation:rgGiftDetail .28s cubic-bezier(.2,.8,.2,1) both;text-align:center}
 .gift-detail-art{font-size:88px;line-height:1;margin:12px 0 18px;filter:drop-shadow(0 12px 24px #0009);animation:rgGiftFloat 2.4s ease-in-out .25s infinite}
@@ -2166,6 +2166,8 @@ button,.send,.save,.icon,.chat-menu{
 
 .gift-send-pill{display:block;width:100%;margin:16px 0 4px;padding:11px 20px;border:0;border-radius:999px;background:#2f2f2f;color:#fff;font-size:15px;font-weight:700;cursor:pointer;transition:transform .16s ease,background .16s ease,box-shadow .16s ease}.gift-send-pill:active{transform:scale(.96);background:#3a3a3a;box-shadow:0 0 18px rgba(255,255,255,.08)}.gift-catalog-drawer{margin-top:14px;max-height:70vh;overflow-y:auto;padding-bottom:8px}.gift-catalog-drawer .gift-card{animation:rgGiftIn .32s ease both}
 
+.gift-row{width:100%!important;display:flex!important;justify-content:center!important;align-items:center!important;margin:12px 0!important;padding:0!important;box-sizing:border-box!important}.gift-row .gift-chat-message{width:100%!important;justify-content:center!important;margin:0!important}.gift-row .gift-chat-card{margin:0 auto!important;float:none!important}
+
 .gift-chat-message{
   display:flex;
   justify-content:center;
@@ -2220,21 +2222,6 @@ button,.send,.save,.icon,.chat-menu{
 .star-tx-main{min-width:0}.star-tx-title{font-size:15px;font-weight:600}.star-tx-sub{font-size:12px;color:#858585;margin-top:3px}
 .star-tx-amount{font-size:14px;font-weight:700;white-space:nowrap}.star-tx-amount.plus{color:#72d88b}.star-tx-amount.minus{color:#ff7474}
 .star-tx-empty{color:#858585;font-size:13px;padding:12px 2px 14px}
-
-/* RayfGram Gifts v2 — single clean gift shop */
-.gifts-shop-head{margin:4px 0 12px;padding:14px 16px;border:1px solid #2b2b2b;border-radius:18px;background:linear-gradient(145deg,#1b1b1d,#111113);box-shadow:0 10px 28px rgba(0,0,0,.22)}
-.gifts-shop-head .title{font-size:22px;font-weight:900;letter-spacing:-.3px}
-.gifts-shop-head .sub{margin-top:5px;color:#8f8f96;font-size:13px;line-height:1.35}
-.gifts-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.gift-card{padding:14px 12px 13px;border-radius:20px;background:linear-gradient(145deg,#202226,#151619);border:1px solid #303238;box-shadow:0 8px 24px rgba(0,0,0,.24);min-width:0}
-.gift-card .gift-emoji{font-size:54px;line-height:1.15;margin:5px 0 8px}
-.gift-card .gift-name{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gift-card .gift-price{font-size:15px;margin-top:8px}
-.gift-card button{margin-top:10px;padding:11px;border-radius:13px;background:#2aabee;font-size:14px}
-.gift-shop-close{margin-bottom:8px}
-.gift-message-row{width:100%!important;display:flex!important;justify-content:center!important;margin:12px 0!important;animation:giftChatMessageIn .38s cubic-bezier(.2,.8,.2,1) both}
-.gift-message-row .gift-chat-card{max-width:min(86%,360px)}
-@media(max-width:430px){.gifts-grid{gap:9px}.gift-card{padding:11px 9px}.gift-card .gift-emoji{font-size:48px}}
 </style>
 </head>
 <body>
@@ -2530,17 +2517,15 @@ function renderMessage(m,append){
  const delay=Math.min($('messages').children.length,12)*18;
  row.style.setProperty('--rg-msg-delay',delay+'ms');
  let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
- const isGiftMessage=!!(m.text&&String(m.text).startsWith('__RAYFGIFT__|'));
- if(isGiftMessage){
-   row.className='gift-message-row';
-   row.innerHTML=giftMessageHtml(m.text)||'';
-   row.id='m'+m.id;
-   $('messages').appendChild(row);
-   return;
+ const giftHtml=m.deleted?null:(m.text?giftMessageHtml(m.text):null);
+ if(giftHtml){
+   row.className='gift-row';
+   row.innerHTML=giftHtml;
+ }else{
+   let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
+   let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
+   row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
  }
- let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${giftMessageHtml(m.text)||esc(m.text)}</div>`:''}`;
- let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
- row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
  $('messages').appendChild(row);
  if(append){
    row.style.animation='none';
@@ -2687,7 +2672,7 @@ async function joinCommunity(){let c=prompt('Invite-код');if(!c)return;try{aw
 let communityType=null, communityId=null;
 async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;const g=users.find(x=>x.kind==='group'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 '+(g?.name||'Группа');$('chatStatus').textContent=g?.username?'@'+g.username:'';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
 async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;const c=users.find(x=>x.kind==='channel'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 '+(c?.name||'Канал');$('chatStatus').textContent=c?.username?'@'+c.username:'';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
-function renderCommunityMessage(m){let row=document.createElement('div');row.id='cm'+m.id;if(m.text&&String(m.text).startsWith('__RAYFGIFT__|')){row.className='gift-message-row';row.innerHTML=giftMessageHtml(m.text)||'';$('messages').appendChild(row);return;}row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.innerHTML=`<div class="bubble"><div class="msgtext">${giftMessageHtml(m.text)||esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
+function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;const gh=giftMessageHtml(m.text);if(gh){row.className='gift-row';row.innerHTML=gh}else{row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`}$('messages').appendChild(row)}
 
 let drawerCloseTimer=null;
 function openDrawer(html){
@@ -2846,8 +2831,8 @@ async function openGiftCatalog(recipientId, recipientUsername){
   try{
     const catalog=await api('/api/gifts/catalog');
     window.__giftCatalog=catalog;
-    const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,12)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-price">${g.price_stars} ⭐️</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
-    openDrawer(`<div class="gift-shop-close"><h2>🎁 Магазин подарков</h2><div style="color:#8f8f96;font-size:13px;margin-top:5px">Выберите подарок и отправьте его собеседнику</div></div><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
+    const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.05}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
+    openDrawer(`<div class="gift-store-head"><div><div class="gift-store-title">🎁 Подарки</div><div class="gift-store-subtitle">Выбери подарок и отправь его в чат</div></div></div><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
   }catch(e){showToast(e.message)}
 }
 function openGiftDetails(g){
