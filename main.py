@@ -168,6 +168,9 @@ class GiftCatalog(Base):
     collection: Mapped[str] = mapped_column(String(80), default="RayfGram Gifts")
     price_stars: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(String(240), default="")
+    is_collectible: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    model_code: Mapped[str] = mapped_column(String(40), default="default")
+    base_backdrop: Mapped[str] = mapped_column(String(40), default="Obsidian")
 
 
 class PromoCode(Base):
@@ -215,8 +218,16 @@ class UserGift(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     sender_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     serial: Mapped[int] = mapped_column(Integer, index=True)
-    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    pattern: Mapped[str] = mapped_column(String(40), default="Classic")
 
+
+class NftMarketListing(Base):
+    __tablename__ = "nft_market_listings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_gift_id: Mapped[int] = mapped_column(ForeignKey("user_gifts.id"), unique=True, index=True)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    price_stars: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class Reaction(Base):
@@ -286,6 +297,29 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
+        await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS is_collectible BOOLEAN DEFAULT FALSE")
+        await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS model_code VARCHAR(40) DEFAULT 'default'")
+        await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS base_backdrop VARCHAR(40) DEFAULT 'Obsidian'")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS upgrade_level INTEGER DEFAULT 0")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS backdrop VARCHAR(40) DEFAULT 'Obsidian'")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS pattern VARCHAR(40) DEFAULT 'Classic'")
+        await conn.exec_driver_sql("UPDATE gift_catalog SET is_collectible = FALSE WHERE is_collectible IS NULL")
+        await conn.exec_driver_sql("UPDATE gift_catalog SET model_code = 'default' WHERE model_code IS NULL OR model_code = ''")
+        await conn.exec_driver_sql("UPDATE gift_catalog SET base_backdrop = 'Obsidian' WHERE base_backdrop IS NULL OR base_backdrop = ''")
+        await conn.exec_driver_sql("UPDATE user_gifts SET upgrade_level = 0 WHERE upgrade_level IS NULL")
+        await conn.exec_driver_sql("UPDATE user_gifts SET backdrop = 'Obsidian' WHERE backdrop IS NULL OR backdrop = ''")
+        await conn.exec_driver_sql("UPDATE user_gifts SET pattern = 'Classic' WHERE pattern IS NULL OR pattern = ''")
+        await conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS nft_market_listings (
+                id SERIAL PRIMARY KEY,
+                user_gift_id INTEGER UNIQUE NOT NULL REFERENCES user_gifts(id) ON DELETE CASCADE,
+                seller_id INTEGER NOT NULL REFERENCES users(id),
+                price_stars INTEGER NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_seller_id ON nft_market_listings(seller_id)")
+        await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_created_at ON nft_market_listings(created_at)")
         await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
@@ -307,6 +341,32 @@ async def init_db():
                 GiftCatalog(code="royal_crown", name="Корона Rayf", emoji="👑", rarity="Легендарный", collection="RayfGram Royals", price_stars=500, description="Редкая корона для настоящей легенды."),
             ])
             await seed_db.commit()
+
+        collectible_defs = [
+            ("nft_pepe", "Pepe", "🐸", "Редкий", 10000, "Pepe", "Emerald", "Графическая коллекционная модель Pepe."),
+            ("nft_midas_pepe", "Midas Pepe", "🐸", "Легендарный", 25000, "MidasPepe", "Golden", "Золотая коллекционная модель с эффектом металла."),
+            ("nft_diamond_pepe", "Diamond Pepe", "🐸", "Легендарный", 50000, "DiamondPepe", "Glass Lagoon", "Алмазная модель с холодным сиянием."),
+            ("nft_lucky_cat", "Lucky Cat", "🐱", "Эпический", 7500, "LuckyCat", "Royal Blue", "Коллекционная удачливая кошка."),
+            ("nft_cyber_panda", "Cyber Panda", "🐼", "Эпический", 12000, "CyberPanda", "Neon", "Киберпанк-модель с неоновым контуром."),
+            ("nft_neon_fox", "Neon Fox", "🦊", "Эпический", 15000, "NeonFox", "Sunset", "Неоновая коллекционная лиса."),
+            ("nft_rayfbot", "RayfBot", "🤖", "Легендарный", 20000, "RayfBot", "Electric Purple", "Фирменная модель RayfGram."),
+            ("nft_alien_rayf", "Alien Rayf", "👽", "Легендарный", 30000, "AlienRayf", "Cosmic", "Инопланетная версия Rayf."),
+            ("nft_mystic_eye", "Mystic Eye", "👁️", "Эпический", 18000, "MysticEye", "Gothic", "Мистический графический глаз."),
+            ("nft_rayf_crown", "Rayf Crown", "👑", "Легендарный", 40000, "RayfCrown", "Royal Gold", "Корона коллекции RayfGram."),
+            ("nft_dark_skull", "Dark Skull", "💀", "Эпический", 22000, "DarkSkull", "Crimson", "Тёмная коллекционная модель черепа."),
+            ("nft_rayf_dragon", "Rayf Dragon", "🐉", "Легендарный", 35000, "RayfDragon", "Emerald", "Дракон из премиальной коллекции."),
+            ("nft_mini_pepe", "Mini Pepe", "🐸", "Обычный", 300, "MiniPepe", "Emerald", "Маленькая коллекционная модель Pepe."),
+            ("nft_tiny_lucky_cat", "Tiny Lucky Cat", "🐱", "Обычный", 400, "TinyLuckyCat", "Royal Blue", "Миниатюрная Lucky Cat."),
+            ("nft_mini_alien", "Mini Alien", "👽", "Обычный", 450, "MiniAlien", "Cosmic", "Миниатюрный Alien."),
+            ("nft_pocket_rayfbot", "Pocket RayfBot", "🤖", "Обычный", 500, "PocketRayfBot", "Electric Purple", "Карманный RayfBot."),
+            ("nft_mini_neon_fox", "Mini Neon Fox", "🦊", "Обычный", 550, "MiniNeonFox", "Sunset", "Миниатюрная Neon Fox."),
+            ("nft_little_rayf_crown", "Little Rayf Crown", "👑", "Обычный", 600, "LittleRayfCrown", "Royal Gold", "Маленькая корона RayfGram."),
+        ]
+        for code, name, emoji, rarity, price, model_code, backdrop, desc in collectible_defs:
+            exists = await seed_db.scalar(select(GiftCatalog).where(GiftCatalog.code == code).limit(1))
+            if not exists:
+                seed_db.add(GiftCatalog(code=code, name=name, emoji=emoji, rarity=rarity, collection="RayfGram Collectibles", price_stars=price, description=desc, is_collectible=True, model_code=model_code, base_backdrop=backdrop))
+        await seed_db.commit()
 
 
 @app.on_event("startup")
@@ -484,14 +544,179 @@ def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | No
     return {
         "id": g.id, "code": g.code, "name": g.name, "emoji": g.emoji,
         "rarity": g.rarity, "collection": g.collection, "price_stars": int(g.price_stars or 0),
-        "description": g.description,
+        "description": g.description, "is_collectible": bool(g.is_collectible),
+        "model_code": g.model_code, "base_backdrop": g.base_backdrop,
         "serial": owner.serial if owner else None,
         "acquired_at": owner.acquired_at.isoformat() if owner else None,
         "owner_gift_id": owner.id if owner else None,
         "owner_id": owner.owner_id if owner else None,
+        "upgrade_level": int(owner.upgrade_level or 0) if owner else 0,
+        "backdrop": owner.backdrop if owner else g.base_backdrop,
+        "pattern": owner.pattern if owner else "Classic",
         "sender_username": sender.username if sender else None,
         "owner_username": owner_user.username if owner_user else None,
     }
+
+
+NFT_BACKDROPS = ["Electric Purple", "Royal Blue", "Emerald", "Sunset", "Crimson", "Candy Pink", "Obsidian", "Golden", "Cosmic", "Glass Lagoon"]
+NFT_PATTERNS = ["Classic", "Stars", "Waves", "Circuit", "Spark", "Royal", "Flame", "Chrome", "Pixel", "Aura"]
+
+
+def nft_upgrade_cost(g: GiftCatalog, current_level: int) -> int:
+    # Уровни 1-3: стоимость растёт от базовой цены, но остаётся доступной для малых коллекций.
+    return max(100, int(round((int(g.price_stars or 0) * (current_level + 1) * 0.05) / 50) * 50))
+
+
+def nft_market_public(listing: NftMarketListing, ug: UserGift, gift: GiftCatalog, seller: User) -> dict:
+    data = gift_public(gift, ug, None, seller)
+    data.update({"listing_id": listing.id, "market_price": int(listing.price_stars), "seller_username": seller.username})
+    return data
+
+
+@app.get("/api/nft/market")
+async def nft_market(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        rows = (await db.execute(
+            select(NftMarketListing, UserGift, GiftCatalog, User)
+            .join(UserGift, UserGift.id == NftMarketListing.user_gift_id)
+            .join(GiftCatalog, GiftCatalog.id == UserGift.gift_id)
+            .join(User, User.id == NftMarketListing.seller_id)
+            .where(GiftCatalog.is_collectible.is_(True), UserGift.upgrade_level > 0)
+            .order_by(NftMarketListing.created_at.desc())
+        )).all()
+        return [nft_market_public(l, ug, g, seller) for l, ug, g, seller in rows]
+
+
+@app.post("/api/nft/upgrade")
+async def upgrade_nft(user_gift_id: int = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        owner = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        ug = await db.scalar(select(UserGift).where(UserGift.id == user_gift_id, UserGift.owner_id == user.id).with_for_update())
+        if not owner or not ug:
+            raise HTTPException(404, "Коллекционный подарок не найден")
+        gift = await db.get(GiftCatalog, ug.gift_id)
+        if not gift or not gift.is_collectible:
+            raise HTTPException(400, "Этот подарок нельзя улучшить")
+        if ug.upgrade_level >= 3:
+            raise HTTPException(400, "Подарок уже улучшен до максимального уровня")
+        listed = await db.scalar(select(NftMarketListing).where(NftMarketListing.user_gift_id == ug.id).limit(1))
+        if listed:
+            raise HTTPException(400, "Сначала снимите подарок с рынка")
+        cost = nft_upgrade_cost(gift, int(ug.upgrade_level or 0))
+        if int(owner.stars or 0) < cost:
+            raise HTTPException(400, f"Недостаточно звёзд. Нужно: {cost} ⭐")
+        owner.stars = int(owner.stars or 0) - cost
+        level = int(ug.upgrade_level or 0) + 1
+        ug.upgrade_level = level
+        # Детерминированный красивый набор атрибутов на каждом уровне.
+        ug.backdrop = NFT_BACKDROPS[(ug.serial + level * 2) % len(NFT_BACKDROPS)]
+        ug.pattern = NFT_PATTERNS[(ug.serial * 3 + level) % len(NFT_PATTERNS)]
+        db.add(StarTransaction(user_id=owner.id, amount=-cost, title=f"Списание -{cost}⭐️", subtitle=f"Улучшение NFT · уровень {level}"))
+        await db.commit()
+        return {"ok": True, "stars": int(owner.stars or 0), "gift": gift_public(gift, ug, None, owner), "cost": cost}
+
+
+@app.post("/api/nft/market/list")
+async def nft_market_list(user_gift_id: int = Form(...), price_stars: int = Form(...), user: User = Depends(current_user)):
+    price = int(price_stars)
+    if price < 25:
+        raise HTTPException(400, "Минимальная цена рынка — 25 ⭐")
+    async with SessionLocal() as db:
+        ug = await db.scalar(select(UserGift).where(UserGift.id == user_gift_id, UserGift.owner_id == user.id).with_for_update())
+        if not ug:
+            raise HTTPException(404, "Подарок не найден")
+        gift = await db.get(GiftCatalog, ug.gift_id)
+        if not gift or not gift.is_collectible:
+            raise HTTPException(400, "На рынок можно выставлять только NFT")
+        if int(ug.upgrade_level or 0) <= 0:
+            raise HTTPException(400, "Сначала улучшите NFT в профиле")
+        exists = await db.scalar(select(NftMarketListing).where(NftMarketListing.user_gift_id == ug.id).limit(1))
+        if exists:
+            raise HTTPException(400, "Этот NFT уже выставлен на рынок")
+        listing = NftMarketListing(user_gift_id=ug.id, seller_id=user.id, price_stars=price)
+        db.add(listing)
+        await db.commit()
+        return {"ok": True, "price_stars": price}
+
+
+@app.post("/api/nft/market/cancel")
+async def nft_market_cancel(listing_id: int = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        listing = await db.scalar(select(NftMarketListing).where(NftMarketListing.id == listing_id, NftMarketListing.seller_id == user.id).with_for_update())
+        if not listing:
+            raise HTTPException(404, "Объявление не найдено")
+        await db.delete(listing)
+        await db.commit()
+        return {"ok": True}
+
+
+@app.post("/api/nft/market/buy")
+async def nft_market_buy(listing_id: int = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        buyer = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        listing = await db.scalar(select(NftMarketListing).where(NftMarketListing.id == listing_id).with_for_update())
+        if not buyer or not listing:
+            raise HTTPException(404, "Лот не найден")
+        if listing.seller_id == buyer.id:
+            raise HTTPException(400, "Нельзя купить собственный лот")
+        ug = await db.scalar(select(UserGift).where(UserGift.id == listing.user_gift_id).with_for_update())
+        if not ug or ug.owner_id != listing.seller_id:
+            raise HTTPException(400, "NFT больше не принадлежит продавцу")
+        gift = await db.get(GiftCatalog, ug.gift_id)
+        seller = await db.scalar(select(User).where(User.id == listing.seller_id).with_for_update())
+        if not gift or not gift.is_collectible or not seller:
+            raise HTTPException(404, "NFT не найден")
+        price = int(listing.price_stars)
+        if int(buyer.stars or 0) < price:
+            raise HTTPException(400, f"Недостаточно звёзд. Нужно: {price} ⭐")
+        commission = price // 5
+        payout = price - commission
+        creator = await db.scalar(select(User).where(func.lower(User.username) == "rayf").with_for_update())
+        buyer.stars = int(buyer.stars or 0) - price
+        seller.stars = int(seller.stars or 0) + payout
+        ug.owner_id = buyer.id
+        ug.sender_id = seller.id
+        await db.delete(listing)
+        db.add(StarTransaction(user_id=buyer.id, amount=-price, title=f"Списание -{price}⭐️", subtitle="Покупка NFT на рынке"))
+        db.add(StarTransaction(user_id=seller.id, amount=payout, title=f"Продажа +{payout}⭐️", subtitle=f"NFT · комиссия 20%"))
+        if creator and commission:
+            creator.stars = int(creator.stars or 0) + commission
+            db.add(StarTransaction(user_id=creator.id, amount=commission, title=f"Комиссия +{commission}⭐️", subtitle=f"NFT рынок @{seller.username}"))
+        await db.commit()
+        return {"ok": True, "stars": int(buyer.stars or 0), "gift": gift_public(gift, ug, seller, buyer)}
+
+
+@app.post("/api/nft/transfer")
+async def nft_transfer(user_gift_id: int = Form(...), username: str = Form(...), user: User = Depends(current_user)):
+    target_username = username.strip().lstrip("@").lower()
+    if not target_username or len(target_username) < 5:
+        raise HTTPException(400, "Укажите корректный @username")
+    async with SessionLocal() as db:
+        sender = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        target = await db.scalar(select(User).where(func.lower(User.username) == target_username).with_for_update())
+        ug = await db.scalar(select(UserGift).where(UserGift.id == user_gift_id, UserGift.owner_id == user.id).with_for_update())
+        if not sender or not target or target.is_banned:
+            raise HTTPException(404, "Пользователь не найден")
+        if target.id == sender.id:
+            raise HTTPException(400, "Нельзя передать NFT самому себе")
+        if not ug:
+            raise HTTPException(404, "NFT не найден")
+        gift = await db.get(GiftCatalog, ug.gift_id)
+        if not gift or not gift.is_collectible:
+            raise HTTPException(400, "Это не коллекционный NFT")
+        listed = await db.scalar(select(NftMarketListing).where(NftMarketListing.user_gift_id == ug.id).limit(1))
+        if listed:
+            raise HTTPException(400, "Сначала снимите NFT с рынка")
+        fee = 25
+        if int(sender.stars or 0) < fee:
+            raise HTTPException(400, "Для передачи нужно 25 ⭐")
+        sender.stars = int(sender.stars or 0) - fee
+        ug.owner_id = target.id
+        ug.sender_id = sender.id
+        db.add(StarTransaction(user_id=sender.id, amount=-fee, title="Списание -25⭐️", subtitle=f"Передача NFT @{target.username}"))
+        await db.commit()
+        return {"ok": True, "stars": int(sender.stars or 0), "recipient": target.username, "gift": gift_public(gift, ug, sender, target)}
+
 
 @app.post("/api/stories")
 async def create_story(file: UploadFile = File(...), user: User = Depends(current_user)):
@@ -629,6 +854,9 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
             owner_id=recipient.id,
             sender_id=sender.id,
             serial=serial,
+            upgrade_level=0,
+            backdrop=gift.base_backdrop if gift.is_collectible else "Obsidian",
+            pattern="Classic",
         )
         db.add(ug)
 
@@ -675,6 +903,8 @@ async def sell_gift(user_gift_id: int = Form(...), user: User = Depends(current_
         gift = await db.get(GiftCatalog, ug.gift_id)
         if not gift:
             raise HTTPException(404, "Подарок не найден")
+        if gift.is_collectible and int(ug.upgrade_level or 0) > 0:
+            raise HTTPException(400, "Улучшенный NFT нельзя продать обычной продажей. Выставьте его на рынок.")
 
         original_price = int(gift.price_stars or 0)
         payout = int(original_price * 80 // 100)
@@ -1771,6 +2001,9 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-usernames-info{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
+.nft-bg-purple{background:radial-gradient(circle at 30% 25%,#9b7cff 0,#5b2bbd 34%,#171025 78%)}.nft-bg-blue{background:radial-gradient(circle at 30% 25%,#7db8ff 0,#2458b8 38%,#0c1630 82%)}.nft-bg-emerald{background:radial-gradient(circle at 30% 25%,#76ffc4 0,#168b63 38%,#071b16 82%)}.nft-bg-sunset{background:linear-gradient(145deg,#ffca7a 0,#ff6b5c 42%,#76215c 100%)}.nft-bg-crimson{background:radial-gradient(circle at 30% 25%,#ff7c91 0,#a51d3e 38%,#250b15 82%)}.nft-bg-pink{background:radial-gradient(circle at 30% 25%,#ffd0ef 0,#db5da7 40%,#451a50 82%)}.nft-bg-black{background:radial-gradient(circle at 30% 25%,#59636d 0,#222a31 36%,#07090b 82%)}.nft-bg-gold{background:radial-gradient(circle at 30% 25%,#fff0a8 0,#c58b1d 42%,#3a2505 82%)}.nft-bg-cosmic{background:radial-gradient(circle at 25% 20%,#d1a3ff 0,#6b39bd 28%,#101c48 62%,#050711 100%)}.nft-bg-lagoon{background:radial-gradient(circle at 30% 20%,#b8ffff 0,#36a9b7 36%,#0b2f3d 82%)}
+.nft-bg-purple::before,.nft-bg-blue::before,.nft-bg-emerald::before,.nft-bg-sunset::before,.nft-bg-crimson::before,.nft-bg-pink::before,.nft-bg-black::before,.nft-bg-gold::before,.nft-bg-cosmic::before,.nft-bg-lagoon::before{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.18) 1px,transparent 1.5px);background-size:18px 18px;opacity:.25;z-index:0}
+.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::after{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 35%,rgba(255,255,255,.26),transparent 34%),linear-gradient(120deg,transparent 35%,rgba(255,255,255,.14) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 3.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:62%;height:62%;filter:drop-shadow(0 14px 22px rgba(0,0,0,.55));animation:nftModel 2.7s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.035)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
 .gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
 .gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
@@ -2836,13 +3069,39 @@ async function saveProfile(){
  }catch(e){showToast(e.message)}
 }
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
+function nftBackdropClass(name){
+ const map={"Electric Purple":"nft-bg-purple","Royal Blue":"nft-bg-blue","Emerald":"nft-bg-emerald","Sunset":"nft-bg-sunset","Crimson":"nft-bg-crimson","Candy Pink":"nft-bg-pink","Obsidian":"nft-bg-black","Golden":"nft-bg-gold","Cosmic":"nft-bg-cosmic","Glass Lagoon":"nft-bg-lagoon","Neon":"nft-bg-purple","Gothic":"nft-bg-crimson","Royal Gold":"nft-bg-gold"};
+ return map[String(name||'Obsidian')]||'nft-bg-black';
+}
+function nftArt(g,small=false){
+ if(!g?.is_collectible) return `<div class="gift-emoji">${g?.emoji||'🎁'}</div>`;
+ const code=String(g.model_code||'default');
+ const palettes={Pepe:['#55d66b','#1c7c43'],MidasPepe:['#ffe27a','#b67a12'],DiamondPepe:['#d9fbff','#4aa6d8'],LuckyCat:['#ffd66b','#d36a28'],CyberPanda:['#8cf7ff','#6b43ff'],NeonFox:['#ff9d4d','#ff3f81'],RayfBot:['#c99cff','#6d35e8'],AlienRayf:['#b8ff87','#38a85c'],MysticEye:['#8ef4ff','#6436ff'],RayfCrown:['#fff0a3','#c99721'],DarkSkull:['#d2d6dc','#4a4f57'],RayfDragon:['#72ff9d','#168b55'],MiniPepe:['#8bea8e','#2e8e4c'],TinyLuckyCat:['#ffe98a','#d98a37'],MiniAlien:['#c7ff9b','#45b85d'],PocketRayfBot:['#e0c9ff','#8249df'],MiniNeonFox:['#ffb06b','#e34c9a'],LittleRayfCrown:['#fff2a8','#b8891e']};
+ const p=palettes[code]||['#ffffff','#777777'];
+ const eye=(x,y)=>`<circle cx="${x}" cy="${y}" r="5" fill="#111"/><circle cx="${x-1.5}" cy="${y-1.5}" r="1.5" fill="#fff"/>`;
+ let shape='';
+ if(code.toLowerCase().includes('pepe')) shape=`<path d="M45 70 Q50 30 95 28 Q140 30 145 70 L132 138 Q100 160 68 138 Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="77" cy="76" rx="18" ry="24" fill="#d8f6d2"/><ellipse cx="118" cy="76" rx="18" ry="24" fill="#d8f6d2"/>${eye(78,78)}${eye(118,78)}<path d="M67 111 Q98 132 129 111" fill="none" stroke="#3c513f" stroke-width="7" stroke-linecap="round"/>`;
+ else if(code.toLowerCase().includes('cat')) shape=`<path d="M45 62 L55 28 L78 47 Q100 36 122 47 L145 28 L155 62 Q160 115 100 142 Q40 115 45 62Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,76)}${eye(122,76)}<path d="M92 99 Q100 106 108 99" fill="none" stroke="#7d4b32" stroke-width="6" stroke-linecap="round"/>`;
+ else if(code.toLowerCase().includes('panda')) shape=`<circle cx="100" cy="88" r="57" fill="#f1f3f5" stroke="${p[1]}" stroke-width="7"/><ellipse cx="73" cy="77" rx="17" ry="23" fill="#15191d" transform="rotate(-25 73 77)"/><ellipse cx="127" cy="77" rx="17" ry="23" fill="#15191d" transform="rotate(25 127 77)"/>${eye(77,80)}${eye(123,80)}<path d="M87 111 Q100 121 113 111" fill="none" stroke="#15191d" stroke-width="7"/>`;
+ else if(code.toLowerCase().includes('fox')) shape=`<path d="M43 68 L56 27 L83 47 Q100 40 117 47 L144 27 L157 68 Q155 120 100 145 Q45 120 43 68Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><path d="M70 93 Q100 115 130 93 Q123 129 100 135 Q77 129 70 93Z" fill="#fff3e8"/>${eye(78,79)}${eye(122,79)}`;
+ else if(code.toLowerCase().includes('bot')) shape=`<rect x="48" y="43" width="104" height="94" rx="24" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><circle cx="100" cy="31" r="9" fill="${p[1]}"/><path d="M100 31 V19" stroke="${p[1]}" stroke-width="6"/>${eye(78,82)}${eye(122,82)}<path d="M76 108 Q100 124 124 108" fill="none" stroke="#3c2f58" stroke-width="7"/>`;
+ else if(code.toLowerCase().includes('alien')) shape=`<ellipse cx="100" cy="86" rx="59" ry="69" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="75" cy="82" rx="17" ry="25" fill="#10251a"/><ellipse cx="125" cy="82" rx="17" ry="25" fill="#10251a"/><circle cx="76" cy="80" r="6" fill="#fff"/><circle cx="124" cy="80" r="6" fill="#fff"/><path d="M79 112 Q100 125 121 112" fill="none" stroke="#2b6b38" stroke-width="7"/>`;
+ else if(code.toLowerCase().includes('eye')) shape=`<ellipse cx="100" cy="90" rx="66" ry="43" fill="#e9fbff" stroke="${p[1]}" stroke-width="8"/><circle cx="100" cy="90" r="25" fill="${p[0]}" stroke="#17222a" stroke-width="6"/><circle cx="100" cy="90" r="9" fill="#111"/>`;
+ else if(code.toLowerCase().includes('crown')) shape=`<path d="M44 120 L53 55 L81 84 L100 45 L119 84 L147 55 L156 120 Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="8"/><rect x="49" y="118" width="102" height="25" rx="9" fill="${p[1]}"/>`;
+ else if(code.toLowerCase().includes('skull')) shape=`<path d="M45 86 Q45 34 100 34 Q155 34 155 86 Q155 119 129 129 L129 148 L113 148 L113 132 L87 132 L87 148 L71 148 L71 129 Q45 119 45 86Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="77" cy="88" rx="15" ry="18" fill="#111"/><ellipse cx="123" cy="88" rx="15" ry="18" fill="#111"/><path d="M92 108 L100 96 L108 108" fill="#111"/>`;
+ else if(code.toLowerCase().includes('dragon')) shape=`<path d="M42 117 Q30 68 62 46 L50 25 L83 42 Q100 31 117 42 L150 25 L138 46 Q170 68 158 117 Q142 147 100 153 Q58 147 42 117Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,78)}${eye(122,78)}<path d="M70 111 Q100 132 130 111" fill="none" stroke="#164e32" stroke-width="7"/>`;
+ else shape=`<circle cx="100" cy="90" r="57" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,84)}${eye(122,84)}`;
+ const svg=`<svg viewBox="0 0 200 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="g${String(g.id)}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient></defs>${shape}</svg>`;
+ const pattern=String(g.pattern||'Classic');
+ return `<div class="nft-art ${nftBackdropClass(g.backdrop)}" title="${esc(g.name)}"><div class="nft-model">${svg}</div><div style="position:absolute;left:9px;bottom:8px;z-index:3;font-size:9px;color:#ffffffb8;font-weight:800">${esc(pattern)}</div></div>`;
+}
 async function showProfileGifts(userId, username){
   const box=$('profileGiftsBox');
   if(!box)return;
   try{
     box.innerHTML='<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="gift-empty">Загрузка подарков…</div></div>';
     const owned=await api('/api/gifts/user/'+userId);
-    const ownedHtml=owned.length?owned.map((g,i)=>`<div class="profile-gift-card" style="animation-delay:${Math.min(i,8)*.05}s" onclick='openGiftDetails(${JSON.stringify(g).replace(/'/g,"&#39;")})'><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-serial">#${g.serial}</div></div>`).join(''):'<div class="gift-empty">Подарков пока нет 🎁</div>';
+    const ownedHtml=owned.length?owned.map((g,i)=>`<div class="profile-gift-card" style="animation-delay:${Math.min(i,8)*.05}s" onclick='openGiftDetails(${JSON.stringify(g).replace(/'/g,"&#39;")})'>${g.is_collectible?nftArt(g,true):`<div class="gift-emoji">${g.emoji}</div>`}<div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}${g.is_collectible&&g.upgrade_level?` · Lv.${g.upgrade_level}`:''}</div><div class="gift-serial">#${g.serial}</div></div>`).join(''):'<div class="gift-empty">Подарков пока нет 🎁</div>';
     box.innerHTML=`<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="profile-gifts-grid">${ownedHtml}</div><button class="gift-send-pill" onclick="openGiftCatalog(${Number(userId)},'${esc(username||'user')}')">Подарить</button></div>`;
     box.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){box.innerHTML='';showToast(e.message)}
@@ -2851,8 +3110,8 @@ async function openGiftCatalog(recipientId, recipientUsername){
   try{
     const catalog=await api('/api/gifts/catalog');
     window.__giftCatalog=catalog;
-    const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.05}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
-    openDrawer(`<h2>🎁 Подарки</h2><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
+    const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.05}s">${g.is_collectible?nftArt(g,true):`<div class="gift-emoji">${g.emoji}</div>`}<div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
+    openDrawer(`<h2>🎁 Подарки</h2><div style="color:#8d8d8d;font-size:12px;margin:0 0 8px">Коллекционные NFT покупаются в базовом виде и улучшаются уже в своём профиле.</div><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
   }catch(e){showToast(e.message)}
 }
 function openGiftDetails(g){
@@ -2860,42 +3119,39 @@ function openGiftDetails(g){
   const sender=g.sender_username?'@'+g.sender_username:'@rayfgrambot';
   const owner=g.owner_username?'@'+g.owner_username:'@user';
   const isOwner=me && Number(g.owner_id)===Number(me.id);
-  const salePrice=Math.floor(Number(g.price_stars||0)*0.8);
-  const sellButton=isOwner && g.owner_gift_id
-    ? `<button class="gift-send-pill" onclick="sellGift(${Number(g.owner_gift_id)},${salePrice})">Продать за ${salePrice}⭐️</button>`
-    : '';
-  openDrawer(`<div class="gift-detail"><div class="gift-detail-art">${g.emoji}</div><div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время отправки:</span><span>${esc(time)}</span></div></div>${sellButton}<button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+  const level=Number(g.upgrade_level||0);
+  const upgradeCost=g.is_collectible?Math.max(100,Math.round((Number(g.price_stars||0)*(level+1)*0.05)/50)*50):0;
+  const upgradeButton=isOwner&&g.is_collectible&&level<3?`<button class="gift-send-pill nft-upgrade-btn" onclick="upgradeNft(${Number(g.owner_gift_id)},${upgradeCost})">✨ Улучшить за ${upgradeCost}⭐️</button>`:'';
+  const transferButton=isOwner&&g.is_collectible?`<button class="gift-send-pill" onclick="transferNft(${Number(g.owner_gift_id)})">↗️ Передать за 25⭐️</button>`:'';
+  const marketButton=isOwner&&g.is_collectible&&level>0?`<button class="gift-send-pill" onclick="listNftOnMarket(${Number(g.owner_gift_id)})">🏪 Выставить на рынок</button>`:'';
+  const art=g.is_collectible?nftArt(g):`<div class="gift-detail-art">${g.emoji}</div>`;
+  openDrawer(`<div class="gift-detail">${art}<div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.is_collectible?`<div class="nft-attrs"><span class="nft-attr">Уровень ${level}</span><span class="nft-attr">${esc(g.backdrop||g.base_backdrop)}</span><span class="nft-attr">${esc(g.pattern||'Classic')}</span></div>`:''}${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время:</span><span>${esc(time)}</span></div>${g.is_collectible?`<div class="gift-detail-row"><span>Коллекция:</span><span>RayfGram Collectibles</span></div>`:''}</div>${upgradeButton}${marketButton}${transferButton}<button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
 }
-async function sellGift(userGiftId,salePrice){
-  try{
-    if(!confirm(`Продать подарок за ${salePrice}⭐️? Комиссия 20%.`)) return;
-    const fd=new FormData();
-    fd.append('user_gift_id',String(Number(userGiftId)));
-    const result=await api('/api/gifts/sell',{method:'POST',body:fd});
-    closeDrawer();
-    if(me) me.stars=Number(result.stars||me.stars||0);
-    showToast(`Подарок продан за ${Number(result.payout)||0}⭐️`);
-    if(typeof openProfile==='function') openProfile();
-  }catch(e){showToast(e.message||'Не удалось продать подарок')}
+async function upgradeNft(userGiftId,cost){
+ try{if(!confirm(`Улучшить NFT за ${cost}⭐️?`))return;const fd=new FormData();fd.append('user_gift_id',String(Number(userGiftId)));const d=await api('/api/nft/upgrade',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast(`✨ NFT улучшен до уровня ${d.gift.upgrade_level}`);openGiftDetails(d.gift);}catch(e){showToast(e.message)}
+}
+async function listNftOnMarket(userGiftId){
+ const price=prompt('За сколько ⭐ выставить NFT?');if(price===null)return;const n=Number(String(price).replace(/[^0-9]/g,''));if(!Number.isInteger(n)||n<25){showToast('Минимум 25 ⭐');return}
+ try{const fd=new FormData();fd.append('user_gift_id',String(Number(userGiftId)));fd.append('price_stars',String(n));await api('/api/nft/market/list',{method:'POST',body:fd});showToast('🏪 NFT выставлен на рынок');closeDrawer();}catch(e){showToast(e.message)}
+}
+async function transferNft(userGiftId){
+ const username=prompt('Введите @username получателя:');if(!username)return;
+ try{const fd=new FormData();fd.append('user_gift_id',String(Number(userGiftId)));fd.append('username',username);const d=await api('/api/nft/transfer',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast(`↗️ NFT передан @${d.recipient} за 25⭐️`);closeDrawer();if(typeof openProfile==='function')openProfile();}catch(e){showToast(e.message)}
+}
+async function openNftMarket(){
+ try{const rows=await api('/api/nft/market');const cards=rows.map((g,i)=>`<div class="nft-market-card" style="animation-delay:${Math.min(i,10)*.04}s"><div class="nft-badge">#${g.serial}</div>${nftArt(g,true)}<div class="gift-name" style="margin-top:8px">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)} · Lv.${g.upgrade_level}</div><div class="nft-attrs"><span class="nft-attr">${esc(g.backdrop)}</span><span class="nft-attr">${esc(g.pattern)}</span></div><div class="nft-market-price">${Number(g.market_price)} ⭐</div><div style="color:#7f8b96;font-size:11px;margin-top:3px">@${esc(g.seller_username)}</div><button class="save" onclick="buyNft(${Number(g.listing_id)},${Number(g.market_price)})">Купить</button></div>`).join('');openDrawer(`<h2>🏪 Рынок</h2><div style="color:#8d8d8d;font-size:12px;margin-bottom:10px">Здесь продаются только улучшенные NFT от реальных пользователей.</div><div class="nft-market-grid">${cards||'<div class="gift-empty" style="grid-column:1/-1">На рынке пока нет NFT</div>'}</div>`);}catch(e){showToast(e.message)}
+}
+async function buyNft(listingId,price){
+ try{if(!confirm(`Купить NFT за ${price}⭐️?`))return;const fd=new FormData();fd.append('listing_id',String(Number(listingId)));const d=await api('/api/nft/market/buy',{method:'POST',body:fd});me.stars=Number(d.stars||me.stars||0);showToast('🎉 NFT куплен');openNftMarket();}catch(e){showToast(e.message)}
 }
 async function openGifts(userId, username){showProfileGifts(userId,username)}
 async function sendGift(recipientId,giftId,giftName,recipientUsername){
   try{
-    // Backend expects multipart/form-data (Form(...)), not JSON.
-    // The normal api() helper also adds the current Bearer token.
-    const fd=new FormData();
-    fd.append('recipient_id',String(Number(recipientId)));
-    fd.append('gift_id',String(Number(giftId)));
+    const fd=new FormData();fd.append('recipient_id',String(Number(recipientId)));fd.append('gift_id',String(Number(giftId)));
     const result=await api('/api/gifts/send',{method:'POST',body:fd});
-
-    if(typeof closeDrawer==='function') closeDrawer();
-    showToast('Подарок отправлен 🎁');
-
-    // Подарок хранится только у получателя. Отправитель получает лишь сообщение в чате.
+    if(typeof closeDrawer==='function') closeDrawer();showToast('Подарок отправлен 🎁');
     if(selected && Number(selected.id)===Number(recipientId)){ loadMessages?.(); }
-  }catch(e){
-    showToast(e.message||'Не удалось отправить подарок');
-  }
+  }catch(e){showToast(e.message||'Не удалось отправить подарок');}
 }
 
 async function openRayfStar(){
@@ -2972,7 +3228,7 @@ function fakeBadge(u){
 
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><button class="save" onclick="openPromoCodes()">🎁 Промокоды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
+ <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><button class="save" onclick="openPromoCodes()">🎁 Промокоды</button><button class="save" onclick="openNftMarket()">🏪 Рынок NFT</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
