@@ -496,7 +496,24 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
         db.add(ug)
         await db.commit()
         await db.refresh(ug)
-        return {"ok": True, "gift": gift_public(gift, ug), "stars": int(sender.stars or 0)}
+
+        # Сохраняем подарок как обычное сообщение чата, чтобы его видели
+        # оба пользователя и он оставался в истории после перезагрузки.
+        gift_message = Message(
+            sender_id=sender.id,
+            recipient_id=recipient.id,
+            text=f"__RAYFGIFT__|{gift.id}|{gift.emoji}|{gift.name}|{price}",
+        )
+        db.add(gift_message)
+        await db.commit()
+        await db.refresh(gift_message)
+
+        return {
+            "ok": True,
+            "gift": gift_public(gift, ug),
+            "stars": int(sender.stars or 0),
+            "message_id": gift_message.id,
+        }
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -1990,6 +2007,9 @@ button,.send,.save,.icon,.chat-menu{
 @media (prefers-reduced-motion:reduce){
   .gift-chat-message,.gift-chat-emoji{animation:none}
 }
+
+.gift-chat-history{width:100%;display:flex;justify-content:center;margin:12px 0;animation:giftChatMessageIn .38s cubic-bezier(.2,.8,.2,1) both}
+.gift-chat-history .gift-chat-card{cursor:default}
 </style>
 </head>
 <body>
@@ -2077,6 +2097,22 @@ function navContacts(){$('search').focus();$('search').value='';loadUsers();setN
 function setNav(i){document.querySelectorAll('.bottom-nav button').forEach((b,n)=>b.classList.toggle('active',n===i));}
 
 async function api(url,opt={}){opt.headers=opt.headers||{};if(token)opt.headers.Authorization='Bearer '+token;let r=await fetch(url,opt);if(!r.ok){let t=await r.text();throw new Error(t||'Ошибка');}return r.json();}
+function giftMessageHtml(text){
+  const raw=String(text||'');
+  if(!raw.startsWith('__RAYFGIFT__|')) return null;
+  const p=raw.split('|');
+  const emoji=esc(p[2]||'🎁');
+  const name=esc(p[3]||'Подарок');
+  const price=Number(p[4]||0);
+  return `<div class="gift-chat-message gift-chat-history">
+    <div class="gift-chat-card">
+      <div class="gift-chat-emoji">${emoji}</div>
+      <div class="gift-chat-text">@${esc(me.username||'user')} отправил вам подарок!</div>
+      <div class="gift-chat-price">Стоимостью ${price}⭐️</div>
+    </div>
+  </div>`;
+}
+
 function showToast(t){$('toast').textContent=t;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2500);}
 function showRegister(){$('loginBox').classList.add('hidden');$('regBox').classList.remove('hidden')}
 function showLogin(){$('regBox').classList.add('hidden');$('loginBox').classList.remove('hidden')}
@@ -2262,7 +2298,7 @@ function renderMessage(m,append){
  const delay=Math.min($('messages').children.length,12)*18;
  row.style.setProperty('--rg-msg-delay',delay+'ms');
  let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
- let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${esc(m.text)}</div>`:''}`;
+ let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${giftMessageHtml(m.text)||esc(m.text)}</div>`:''}`;
  let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
  row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
  $('messages').appendChild(row);
@@ -2411,7 +2447,7 @@ async function joinCommunity(){let c=prompt('Invite-код');if(!c)return;try{aw
 let communityType=null, communityId=null;
 async function selectGroup(id){closeDrawer();communityType='group';communityId=id;selected=null;const g=users.find(x=>x.kind==='group'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='👥 '+(g?.name||'Группа');$('chatStatus').textContent=g?.username?'@'+g.username:'';try{let ms=await api('/api/groups/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
 async function selectChannel(id){closeDrawer();communityType='channel';communityId=id;selected=null;const c=users.find(x=>x.kind==='channel'&&x.id===id);$('sidebar').classList.add('chat-open');$('chat').classList.add('chat-open');$('chatName').textContent='📢 '+(c?.name||'Канал');$('chatStatus').textContent=c?.username?'@'+c.username:'';try{let ms=await api('/api/channels/'+id+'/messages');$('messages').innerHTML='';ms.forEach(m=>renderCommunityMessage(m));scrollBottom()}catch(e){showToast(e.message)}}
-function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
+function renderCommunityMessage(m){let row=document.createElement('div');row.className='msgrow '+(m.sender_id===me.id?'mine':'');row.id='cm'+m.id;row.innerHTML=`<div class="bubble"><div class="msgtext">${giftMessageHtml(m.text)||esc(m.text)}</div><div class="meta">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${m.pinned?' · 📌':''}</div></div>`;$('messages').appendChild(row)}
 
 let drawerCloseTimer=null;
 function openDrawer(html){
@@ -2547,21 +2583,8 @@ async function sendGift(recipientId,giftId,giftName,recipientUsername){
     const catalogGift=(window.__giftCatalog||[]).find(g=>Number(g.id)===Number(giftId));
     const emoji=result?.gift?.emoji || catalogGift?.emoji || '🎁';
     const price=Number(result?.gift?.price_stars ?? catalogGift?.price_stars ?? 0);
-
-    if(selected && Number(selected.id)===Number(recipientId)){
-      const messages=$('messages') || $('chatMessages');
-      if(messages){
-        const wrap=document.createElement('div');
-        wrap.className='gift-chat-message';
-        wrap.innerHTML=`<div class="gift-chat-card">
-          <div class="gift-chat-emoji">${emoji}</div>
-          <div class="gift-chat-text">@${esc(me.username||'user')} отправил вам подарок!</div>
-          <div class="gift-chat-price">Стоимостью ${price}⭐️</div>
-        </div>`;
-        messages.appendChild(wrap);
-        requestAnimationFrame(()=>{messages.scrollTop=messages.scrollHeight});
-      }
-    }
+    // Сообщение сохранено сервером; оно появится у обоих через историю/обновление.
+    if(selected && Number(selected.id)===Number(recipientId)){ loadMessages?.(); }
   }catch(e){
     showToast(e.message||'Не удалось отправить подарок');
   }
