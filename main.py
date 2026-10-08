@@ -428,13 +428,15 @@ async def redeem_promo(code: str = Form(...), user: User = Depends(current_user)
         return {"ok": True, "added": int(promo.stars or 0), "stars": int(account.stars or 0)}
 
 
-def gift_public(g: GiftCatalog, owner: UserGift | None = None) -> dict:
+def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | None = None, owner_user: User | None = None) -> dict:
     return {
         "id": g.id, "code": g.code, "name": g.name, "emoji": g.emoji,
         "rarity": g.rarity, "collection": g.collection, "price_stars": int(g.price_stars or 0),
         "description": g.description,
         "serial": owner.serial if owner else None,
         "acquired_at": owner.acquired_at.isoformat() if owner else None,
+        "sender_username": sender.username if sender else None,
+        "owner_username": owner_user.username if owner_user else None,
     }
 
 @app.get("/api/gifts/catalog")
@@ -447,7 +449,11 @@ async def gift_catalog(user: User = Depends(current_user)):
 async def my_gifts(user: User = Depends(current_user)):
     async with SessionLocal() as db:
         rows = (await db.execute(select(UserGift, GiftCatalog).join(GiftCatalog, GiftCatalog.id == UserGift.gift_id).where(UserGift.owner_id == user.id).order_by(UserGift.acquired_at.desc()))).all()
-        return [gift_public(g, ug) for ug, g in rows]
+        sender_ids = {ug.sender_id for ug, _ in rows if ug.sender_id}
+        senders = {}
+        if sender_ids:
+            senders = {u.id: u for u in (await db.execute(select(User).where(User.id.in_(sender_ids)))).scalars().all()}
+        return [gift_public(g, ug, senders.get(ug.sender_id), user) for ug, g in rows]
 
 @app.get("/api/gifts/user/{user_id}")
 async def user_gifts(user_id: int, user: User = Depends(current_user)):
@@ -456,7 +462,11 @@ async def user_gifts(user_id: int, user: User = Depends(current_user)):
         if not target or target.is_banned:
             raise HTTPException(404, "Пользователь не найден")
         rows = (await db.execute(select(UserGift, GiftCatalog).join(GiftCatalog, GiftCatalog.id == UserGift.gift_id).where(UserGift.owner_id == user_id).order_by(UserGift.acquired_at.desc()))).all()
-        return [gift_public(g, ug) for ug, g in rows]
+        sender_ids = {ug.sender_id for ug, _ in rows if ug.sender_id}
+        senders = {}
+        if sender_ids:
+            senders = {u.id: u for u in (await db.execute(select(User).where(User.id.in_(sender_ids)))).scalars().all()}
+        return [gift_public(g, ug, senders.get(ug.sender_id), target) for ug, g in rows]
 
 @app.post("/api/gifts/send")
 async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), user: User = Depends(current_user)):
@@ -1541,6 +1551,30 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .gift-card button{width:100%;margin-top:9px;border:0;border-radius:11px;padding:9px;background:#2aabee;color:#fff;font-weight:800}
 .gift-serial{font-size:11px;color:#7f8b96;margin-top:4px}
 .gift-empty{padding:18px;text-align:center;color:#7f8b96;background:#171b20;border-radius:16px}
+.profile-gifts-section{margin-top:18px;animation:rgSoftRise .28s ease both}
+.profile-gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.profile-gift-card{position:relative;background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;cursor:pointer;animation:rgGiftPop .34s cubic-bezier(.2,.8,.2,1) both;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.profile-gift-card:hover{transform:translateY(-2px);border-color:#46515c;box-shadow:0 12px 28px #0005}
+.profile-gift-card:active{transform:scale(.97)}
+.profile-gift-card .gift-emoji{font-size:48px;line-height:1.08;filter:drop-shadow(0 5px 10px #0008)}
+.profile-gift-card .gift-name{font-weight:800;margin-top:7px;font-size:14px}
+.profile-gift-card .gift-rarity{font-size:11px;color:#aeb8c2;margin-top:3px}
+.profile-gift-card .gift-serial{font-size:11px;color:#7f8b96;margin-top:4px}
+.gift-detail{animation:rgGiftDetail .28s cubic-bezier(.2,.8,.2,1) both;text-align:center}
+.gift-detail-art{font-size:88px;line-height:1;margin:12px 0 18px;filter:drop-shadow(0 12px 24px #0009);animation:rgGiftFloat 2.4s ease-in-out .25s infinite}
+.gift-detail-name{font-size:24px;font-weight:900}
+.gift-detail-rarity{color:#aeb8c2;margin-top:5px}
+.gift-detail-info{margin-top:22px;background:#171b20;border:1px solid #252b32;border-radius:18px;overflow:hidden;text-align:left}
+.gift-detail-row{display:flex;justify-content:space-between;gap:16px;padding:13px 15px;border-bottom:1px solid #252b32;font-size:14px}
+.gift-detail-row:last-child{border-bottom:0}
+.gift-detail-row span:first-child{color:#7f8b96}
+.gift-detail-row span:last-child{font-weight:700;text-align:right;overflow-wrap:anywhere}
+.gift-done{width:100%;margin-top:16px;border:0;border-radius:999px;padding:13px 18px;background:#2aabee;color:#fff;font-weight:900;font-size:15px;transition:transform .16s ease,filter .16s ease}
+.gift-done:active{transform:scale(.97);filter:brightness(.9)}
+@keyframes rgGiftPop{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgGiftDetail{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes rgGiftFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-5px) rotate(1deg)}}
+@media(max-width:430px){.profile-gifts-grid{gap:8px}.profile-gift-card{padding:10px}.profile-gift-card .gift-emoji{font-size:42px}}
 .gift-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .gift-title-row button{border:0;background:#252b32;color:#fff;border-radius:12px;padding:9px 12px;font-weight:700}
 @media(max-width:430px){.gifts-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gift-card{padding:10px}.gift-card .gift-emoji{font-size:40px}}
@@ -2303,7 +2337,7 @@ function openPublicProfile(username){
      </div>
      <div class="profile-actions">
        <button class="profile-action" onclick="closeDrawer();selectUser(${u.id})"><span>💬</span>Написать</button>
-       <button class="profile-action" onclick="openGifts(${u.id},'${esc(u.username)}')"><span>🎁</span>Подарки</button>
+       <button class="profile-action" onclick="showProfileGifts(${u.id},'${esc(u.username)}')"><span>🎁</span>Подарки</button>
        <button class="profile-action" onclick="showToast('Дополнительно')"><span>⋮</span>Ещё</button>
      </div>
      <div class="profile-section">Информация</div>
@@ -2312,6 +2346,7 @@ function openPublicProfile(username){
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
      </div>
+     <div id="profileGiftsBox"></div>
    </div>`);
  }).catch(e=>showToast(e.message))
 }
@@ -2368,7 +2403,7 @@ function openProfile(){
    <div class="profile-actions own-profile-actions">
      <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
      <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
-     <button class="profile-action" onclick="openGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
+     <button class="profile-action" onclick="showProfileGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
      <button class="profile-action" onclick="openSettings()"><span>⚙️</span>Настройки</button>
    </div>
    <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
@@ -2379,6 +2414,7 @@ function openProfile(){
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
    </div>
+   <div id="profileGiftsBox"></div>
    <div id="profileEditBox"></div>
  </div>`);
 }
@@ -2419,15 +2455,26 @@ async function saveProfile(){
  }catch(e){showToast(e.message)}
 }
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
-async function openGifts(userId, username){
+async function showProfileGifts(userId, username){
+  const box=$('profileGiftsBox');
+  if(!box)return;
   try{
-    const [owned, catalog] = await Promise.all([api('/api/gifts/user/'+userId), api('/api/gifts/catalog')]);
-    const isMe = Number(userId)===Number(me.id);
-    const ownedHtml = owned.length ? owned.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-serial">#${g.serial}</div></div>`).join('') : '<div class="gift-empty">Подарков пока нет 🎁</div>';
-    const catalogHtml = !isMe ? `<div class="profile-section">Подарить</div><div class="gifts-grid">${catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${userId},${g.id},'${esc(g.name)}','${esc(username||'user')}')">Подарить</button></div>`).join('')}</div>` : '';
-    openDrawer(`<div class="gift-title-row"><h2>🎁 Подарки @${esc(username||'user')}</h2></div><div class="profile-section">Коллекция</div><div class="gifts-grid">${ownedHtml}</div>${catalogHtml}`);
-  }catch(e){showToast(e.message)}
+    box.innerHTML='<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="gift-empty">Загрузка подарков…</div></div>';
+    const owned=await api('/api/gifts/user/'+userId);
+    const isMe=Number(userId)===Number(me.id);
+    const ownedHtml=owned.length?owned.map((g,i)=>`<div class="profile-gift-card" style="animation-delay:${Math.min(i,8)*.05}s" onclick='openGiftDetails(${JSON.stringify(g).replace(/'/g,"&#39;")})'><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-serial">#${g.serial}</div></div>`).join(''):'<div class="gift-empty">Подарков пока нет 🎁</div>';
+    const catalogHtml=!isMe?`<div class="profile-section" style="margin-top:18px">Подарить</div><div class="gifts-grid" style="margin-top:10px">${(await api('/api/gifts/catalog')).map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${userId},${g.id},'${esc(g.name)}','${esc(username||'user')}')">Подарить</button></div>`).join('')}</div>`:'';
+    box.innerHTML=`<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="profile-gifts-grid">${ownedHtml}</div>${catalogHtml}</div>`;
+    box.scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){box.innerHTML='';showToast(e.message)}
 }
+function openGiftDetails(g){
+  const time=g.acquired_at?new Date(g.acquired_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—';
+  const sender=g.sender_username?'@'+g.sender_username:'@rayfgrambot';
+  const owner=g.owner_username?'@'+g.owner_username:'@user';
+  openDrawer(`<div class="gift-detail"><div class="gift-detail-art">${g.emoji}</div><div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время отправки:</span><span>${esc(time)}</span></div></div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+}
+async function openGifts(userId, username){showProfileGifts(userId,username)}
 async function sendGift(recipientId,giftId,name,recipientUsername){
   if(!confirm('Подарить «'+name+'»?'))return;
   try{
