@@ -382,7 +382,7 @@ def channel_public(c: Channel) -> dict:
 async def register(username: str = Form(...), password: str = Form(...), display_name: str = Form("")):
     username = username.strip().lower()
     display_name = display_name.strip()
-    if len(username) < 3 or len(username) > 32:
+    if len(username) < 5 or len(username) > 32:
         raise HTTPException(400, "Username: 3–32 символа")
     if len(password) < 6:
         raise HTTPException(400, "Пароль: минимум 6 символов")
@@ -672,6 +672,27 @@ async def public_profile(username: str):
             raise HTTPException(404, "Пользователь не найден")
         return user_public(u, u.id in connections)
 
+
+@app.post("/api/profile/username")
+async def set_profile_username(username: str = Form(...), user: User = Depends(current_user)):
+    username = username.strip().lstrip("@").lower()
+    if len(username) < 5:
+        raise HTTPException(400, "Юзернейм должен быть не короче 5 символов")
+    if not re.fullmatch(r"[a-zA-Z0-9_]+", username):
+        raise HTTPException(400, "Юзернейм: только латинские буквы, цифры и _")
+    async with SessionLocal() as db:
+        q = await db.execute(select(User).where(func.lower(User.username) == username))
+        exists = q.scalar_one_or_none()
+        if exists and exists.id != user.id:
+            raise HTTPException(400, "Этот юзернейм уже занят")
+        u = await db.get(User, user.id)
+        if not u:
+            raise HTTPException(404, "Пользователь не найден")
+        u.username = username
+        await db.commit()
+        await db.refresh(u)
+        return {"username": u.username}
+
 @app.post("/api/profile/background")
 async def set_profile_background(color: str = Form(...), user: User = Depends(current_user)):
     allowed = {"black", "white", "blue", "red", "green", "pink", "gray"}
@@ -724,7 +745,7 @@ async def create_group(name: str = Form(...), username: str = Form(""), descript
     if not name: raise HTTPException(400, "Название группы обязательно")
     if not username:
         username = "group_" + secrets.token_hex(4)
-    if not username.replace("_", "").isalnum() or len(username) < 3:
+    if not username.replace("_", "").isalnum() or len(username) < 5:
         raise HTTPException(400, "Некорректный username группы")
     async with SessionLocal() as db:
         if await db.scalar(select(Group).where(Group.username == username)):
@@ -1665,6 +1686,9 @@ button,.send,.save,.icon,.chat-menu{
 
 /* RayfGram: reliable chat scrolling */
 .chat-messages,.messages,.chat-body,#messages,#chatMessages{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain;scroll-behavior:smooth;min-height:0;}
+
+.fake-badge{display:inline-flex!important;align-items:center;justify-content:center;min-width:38px;height:18px;padding:0 6px;margin-left:5px;vertical-align:middle;border-radius:6px;background:#e53935;color:#fff;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:18px;box-shadow:0 0 10px rgba(229,57,53,.35);animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both}
+
 </style>
 </head>
 <body>
@@ -1672,14 +1696,14 @@ button,.send,.save,.icon,.chat-menu{
  <div class="card">
   <div class="logo">✈️ RayfGram</div><div class="sub">Личный мессенджер</div>
   <div id="loginBox">
-   <input id="loginUser" class="field" placeholder="Username">
+   <input id="loginUser" class="field" placeholder="Username (без@)">
    <input id="loginPass" class="field" type="password" placeholder="Пароль">
    <button class="primary" onclick="login()">Войти</button>
    <button class="switch" onclick="showRegister()">Создать аккаунт</button>
   </div>
   <div id="regBox" class="hidden">
    <input id="regName" class="field" placeholder="Имя">
-   <input id="regUser" class="field" placeholder="Username">
+   <input id="regUser" class="field" placeholder="Username (без@)">
    <input id="regPass" class="field" type="password" placeholder="Пароль (6+)">
    <button class="primary" onclick="register()">Зарегистрироваться</button>
    <button class="switch" onclick="showLogin()">У меня уже есть аккаунт</button>
@@ -2048,7 +2072,7 @@ function openPublicProfile(username){
      <div class="profile-hero" style="background:${profileBgStyle(u.profile_bg)};color:${profileBgTextColor(u.profile_bg)}">
        ${String(me?.username||'').toLowerCase()===String(u.username||'').toLowerCase()?`<button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(u.username)}','${u.profile_bg||'gray'}')">⋮</button><div id="profileBgMenu"></div>`:''}
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
-       <div class="profile-name">${esc(u.display_name||u.username)} ${v}${scam}</div>
+       <div class="profile-name">${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
        <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
@@ -2140,6 +2164,36 @@ async function openRayfStar(){
  try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
 }
 function openBuyStars(){openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#8d8d8d;font-size:18px">Скоро появится</div>`)}
+
+async function saveProfileUsername(){
+  const input=document.getElementById('profileUsernameInput');
+  if(!input)return;
+  const username=input.value.trim().replace(/^@/,'').toLowerCase();
+  if(username.length<5){showToast('Юзернейм минимум 5 символов');return}
+  if(!/^[a-z0-9_]+$/.test(username)){showToast('Только латинские буквы, цифры и _');return}
+  try{
+    const fd=new FormData();fd.append('username',username);
+    const d=await api('/api/profile/username',{method:'POST',body:fd});
+    if(me)me.username=d.username;
+    closeDrawer();
+    showToast('Юзернейм изменён');
+    if(typeof openProfile==='function')openProfile();
+  }catch(e){showToast(e.message)}
+}
+function openEditUsername(){
+  const current=String(me?.username||'').replace(/^@/,'');
+  openDrawer(`<h2>✏️ Изменить юзернейм</h2>
+    <p style="color:#8d8d8d">Минимум 5 символов, вводить без @.</p>
+    <input id="profileUsernameInput" class="input" value="${esc(current)}" placeholder="Юзернейм (без@)" maxlength="64" autocomplete="off">
+    <button class="save" onclick="saveProfileUsername()">Сохранить</button>`);
+}
+
+
+function fakeBadge(u){
+  return String(u?.username||'').replace(/^@/,'').toLowerCase()==='durov'
+    ? '<span class="fake-badge">FAKE</span>' : '';
+}
+
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
  <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
