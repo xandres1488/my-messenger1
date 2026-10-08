@@ -1822,6 +1822,12 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 @media(max-width:700px){.panel{width:100%;padding:14px 16px}.drawer{background:#0e1621}.sidebar{max-width:none;width:100%}.chat{display:none}.sidebar.chat-open{display:none}.chat.chat-open{display:flex}.chathead .back{display:block}.messages{padding:14px 4%}.bubble{max-width:84%}}
 
 
+
+.top-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;white-space:nowrap}
+.top-actions .icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;min-width:36px;margin:0;padding:0}
+.top-plus{font-size:27px!important;font-weight:300!important;line-height:1!important;border-radius:12px!important;background:#171717!important;border:1px solid #2b2b2b!important}
+.top-plus:active{transform:scale(.9)!important}
+@media(max-width:700px){.top-actions{gap:2px}.top-actions .icon{width:34px;height:34px;min-width:34px}.top-plus{font-size:26px!important}}
 .story-camera-wrap{display:flex;justify-content:center;align-items:center;padding:8px 10px 4px}
 .story-camera-btn{width:52px;height:52px;border-radius:18px;border:1px solid #2d3940;background:#151b1f;color:#fff;font-size:24px;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .16s ease,box-shadow .16s ease}
 .story-camera-btn:active{transform:scale(.92)}
@@ -2256,11 +2262,11 @@ button,.send,.save,.icon,.chat-menu{
 <div id="app" class="hidden">
  <aside class="sidebar" id="sidebar">
   <div class="top">
-   <div class="toprow"><span class="brand">RayfGram</span><span><button class="icon" onclick="openCommunities()">👥</button><button class="icon" onclick="searchMessages()">🔎</button><button class="icon" onclick="openProfile()">👤</button><button class="icon" onclick="openSettings()">⚙️</button></span></div>
+   <div class="toprow"><span class="brand">RayfGram</span><span class="top-actions"><button class="icon top-plus" onclick="openAddMenu()" aria-label="Добавить">+</button><button class="icon" onclick="openCommunities()" aria-label="Сообщества">👥</button><button class="icon" onclick="searchMessages()" aria-label="Поиск">🔎</button><button class="icon" onclick="openProfile()" aria-label="Профиль">👤</button><button class="icon" onclick="openSettings()" aria-label="Настройки">⚙️</button></span></div>
    <input id="search" class="search" placeholder="🔍 Найти пользователя или чат" oninput="loadUsers()">
  </div>
  <div id="userlist" class="userlist"></div>
- <div class="story-camera-wrap"><button class="story-camera-btn" onclick="storyPick.click()" aria-label="Добавить сторис">📷</button><input id="storyPick" type="file" accept="image/*,video/*" hidden onchange="uploadStory()"></div>
+ <input id="storyPick" type="file" accept="image/*,video/*" hidden onchange="uploadStory()">
  <nav class="bottom-nav">
    <button class="active" onclick="navChats()"><span class="nav-ico">💬</span>Чаты</button>
    <button onclick="navContacts()"><span class="nav-ico">👤</span>Контакты</button>
@@ -2701,6 +2707,12 @@ function creatorPin(){
   return `<button class="creator-pin" type="button" title="Пин создателя" aria-label="Пин создателя" onclick="event.stopPropagation();showToast('это пин создателя')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.55 6.1 6.45.55-4.9 4.25 1.48 6.32L12 16.35 6.42 19.72 7.9 13.4 3 9.15l6.45-.55L12 2.5z"></path></svg></button>`;
 }
 function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayf'; }
+
+function openAddMenu(){
+  openDrawer(`<h2>＋ Добавить</h2>
+    <button class="save" onclick="closeDrawer();setTimeout(()=>storyPick.click(),80)">📷 Добавить сторис</button>
+    <div style="margin-top:10px;color:#858585;font-size:13px;text-align:center">Выбери фото или видео из галереи</div>`);
+}
 
 async function loadStorySummary(){
   try{
