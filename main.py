@@ -1293,7 +1293,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 @keyframes rgScamGlow{0%,100%{box-shadow:0 0 6px rgba(255,55,70,.12),inset 0 0 5px rgba(255,55,70,.05)}50%{box-shadow:0 0 13px rgba(255,55,70,.32),inset 0 0 9px rgba(255,55,70,.12)}}
 .chatname .scam-badge{height:17px!important;min-width:46px!important;font-size:8px!important;letter-spacing:1.2px!important;margin-left:5px!important;vertical-align:-2px!important}
 .profile-name .scam-badge{height:19px!important;min-width:50px!important;font-size:9px!important}
-.profile-bg-list{display:flex;flex-direction:column;gap:2px}.profile-bg-label{flex:1;min-width:0}.profile-bg-option:active{transform:scale(.98)}@media(max-width:430px){.profile-bg-pop{left:8px;right:8px;width:calc(100% - 16px);max-width:none;max-height:65vh;padding:10px}.profile-bg-option{min-height:58px;padding:13px 12px;font-size:16px}.profile-bg-swatch{width:32px;height:32px;border-radius:10px}}@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
+.profile-bg-list{display:flex;flex-direction:column;gap:2px}.profile-bg-label{flex:1;min-width:0}.profile-bg-option:active{transform:scale(.98)}@media(max-width:430px){.profile-bg-pop{position:fixed;left:50%;right:auto;top:auto;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(420px,calc(100vw - 16px));max-height:min(68vh,560px);overflow-y:auto!important;overflow-x:hidden!important;box-sizing:border-box;padding:12px;background:rgba(17,18,21,.99);border:1px solid rgba(255,255,255,.16);border-radius:22px;box-shadow:0 24px 70px rgba(0,0,0,.72);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:2147483647;animation:rgBgMenuIn .22s cubic-bezier(.2,.8,.2,1) both;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:auto;scrollbar-color:rgba(255,255,255,.35) transparent}.profile-bg-option{min-height:58px;padding:13px 12px;font-size:16px}.profile-bg-swatch{width:32px;height:32px;border-radius:10px}}@media(max-width:430px){.profile-bg-pop{bottom:calc(72px + env(safe-area-inset-bottom));width:calc(100vw - 16px);max-height:62vh}.profile-bg-option{min-height:58px;padding:13px 12px;font-size:16px}}
+@media(prefers-reduced-motion:reduce){.scam-badge{animation:none!important}}
 .profile-page{padding:8px 2px 30px;max-width:520px;margin:0 auto}
 .profile-hero{width:100%;box-sizing:border-box;text-align:center;padding:18px 16px 22px;background:linear-gradient(180deg,#1d2b36 0%,#17212b 100%);border:1px solid #273946;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .profile-hero{position:relative;overflow:visible;transition:background .28s ease,border-color .28s ease,box-shadow .28s ease}
@@ -1661,6 +1662,9 @@ button,.send,.save,.icon,.chat-menu{
   .profile-actions,.profile-info,.toast,.send::after{animation:none!important}
 }
 
+
+/* RayfGram: reliable chat scrolling */
+.chat-messages,.messages,.chat-body,#messages,#chatMessages{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain;scroll-behavior:smooth;min-height:0;}
 </style>
 </head>
 <body>
