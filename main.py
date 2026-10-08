@@ -169,6 +169,23 @@ class GiftCatalog(Base):
     description: Mapped[str] = mapped_column(String(240), default="")
 
 
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    stars: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class PromoRedemption(Base):
+    __tablename__ = "promo_redemptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    promo_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    redeemed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class UserGift(Base):
     __tablename__ = "user_gifts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -385,6 +402,30 @@ async def rayfstar(user: User = Depends(current_user)):
 @app.get("/api/stars")
 async def stars(user: User = Depends(current_user)):
     return {"stars": int(user.stars or 0)}
+
+
+@app.post("/api/promo/redeem")
+async def redeem_promo(code: str = Form(...), user: User = Depends(current_user)):
+    clean = code.strip().upper()
+    if not clean:
+        raise HTTPException(400, "Введите промокод")
+    async with SessionLocal() as db:
+        promo = await db.scalar(select(PromoCode).where(PromoCode.code == clean, PromoCode.active.is_(True)))
+        if not promo:
+            raise HTTPException(400, "Промокод не найден или уже недоступен")
+        already = await db.scalar(
+            select(PromoRedemption).where(
+                PromoRedemption.promo_id == promo.id,
+                PromoRedemption.user_id == user.id
+            )
+        )
+        if already:
+            raise HTTPException(400, "Этот промокод уже активирован на вашем аккаунте")
+        account = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        account.stars = int(account.stars or 0) + int(promo.stars or 0)
+        db.add(PromoRedemption(promo_id=promo.id, user_id=user.id))
+        await db.commit()
+        return {"ok": True, "added": int(promo.stars or 0), "stars": int(account.stars or 0)}
 
 
 def gift_public(g: GiftCatalog, owner: UserGift | None = None) -> dict:
@@ -2314,6 +2355,7 @@ function openProfile(){
    </div>
    <div class="profile-actions">
      <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
+     <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
      <button class="profile-action" onclick="openGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
      <button class="profile-action" onclick="openSettings()"><span>⚙️</span>Настройки</button>
    </div>
@@ -2389,6 +2431,25 @@ async function openRayfStar(){
  try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
 }
 function openBuyStars(){openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#8d8d8d;font-size:18px">Скоро появится</div>`)}
+function openPromoCodes(){
+ openDrawer(`<h2>🎁 Промокоды</h2>
+ <div style="color:#8d8d8d;margin:8px 0 16px">Введите промокод и получите звёзды на этот аккаунт.</div>
+ <input id="promoCodeInput" class="field" maxlength="64" autocomplete="off" placeholder="Промокод">
+ <button class="save" onclick="redeemPromoCode()">🎁 Активировать</button>`)
+}
+async function redeemPromoCode(){
+ const input=document.getElementById('promoCodeInput');
+ const code=String(input?.value||'').trim();
+ if(!code){showToast('Введите промокод');return}
+ try{
+   const fd=new FormData();fd.append('code',code);
+   const d=await api('/api/promo/redeem',{method:'POST',body:fd});
+   me.stars=d.stars;
+   showToast('🎁 +' + d.added + ' ⭐ Получено!');
+   setTimeout(()=>openRayfStar(),350);
+ }catch(e){showToast(e.message)}
+}
+
 
 async function saveProfileUsername(){
   const input=document.getElementById('profileUsernameInput');
@@ -2421,7 +2482,7 @@ function fakeBadge(u){
 
 function openSettings(){
  openDrawer(`<h2>⚙️ Настройки</h2>
- <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
+ <button class="save" onclick="openRayfStar()">⭐ RayfStar</button><button class="save" onclick="openBuyStars()">⭐ Купить звёзды</button><button class="save" onclick="openPromoCodes()">🎁 Промокоды</button><p>Уведомления</p><button class="save" onclick="enableNotifications()">🔔 Разрешить уведомления</button><p style="margin-top:25px">Безопасность</p><button class="save" onclick="setup2FA()">🔐 Настроить 2FA</button>
  <p style="margin-top:25px">Интерфейс</p><button class="save" onclick="document.body.classList.toggle('light');showToast('Настройка интерфейса сохранена')">🌙 Тёмная тема</button>
  <p style="color:#8da1af;margin-top:30px">RayfGram · приватный мессенджер</p>
  <button class="save" onclick="logout()">Выйти</button>`)
