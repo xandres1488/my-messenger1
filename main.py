@@ -1625,7 +1625,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .userlist{overflow:auto;flex:1}.user{display:flex;gap:11px;align-items:center;padding:12px 14px;border-bottom:1px solid #20303c}.user:hover,.user.active{background:#223442}
 .avatar{width:48px;height:48px;border-radius:50%;background:#2aabee;display:grid;place-items:center;font-weight:800;flex:none;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}
 .uinfo{min-width:0;flex:1}.uname{font-weight:700}.preview{color:#91a3b0;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{width:9px;height:9px;border-radius:50%;background:#35d07f;display:inline-block;margin-right:5px}
-.chat{flex:1;display:flex;flex-direction:column;min-width:0;background:#0e1621}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:#0e1621}
 .chathead{
  height:64px;
  min-height:64px;
@@ -1739,7 +1739,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  }
 }
 
-.messages{flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
+.messages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%);touch-action:pan-y;-webkit-overflow-scrolling:touch}
 .msgrow{display:flex;margin:5px 0;flex:none}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
 .msgtext{white-space:pre-wrap;word-break:break-word}.meta{font-size:11px;color:#a7bac7;text-align:right;margin-top:3px}.deleted{font-style:italic;color:#91a3b0}
 .file{display:block;margin:4px 0;color:#fff;text-decoration:none;background:#ffffff14;border-radius:8px;padding:9px}.file:hover{background:#ffffff22}
@@ -2624,6 +2624,18 @@ function renderMessage(m,append){
 }
 function updateMessageRead(id){let row=$(`m${id}`);if(row){let meta=row.querySelector('.meta');if(meta&&!meta.textContent.includes('✓✓'))meta.textContent+=' ✓✓'}}
 function scrollBottom(){let x=$('messages');x.scrollTop=x.scrollHeight}
+
+// Надёжная подгрузка старых сообщений при прокрутке вверх.
+// На телефоне слушаем именно контейнер сообщений, а не страницу.
+function initHistoryScroll(){
+ const box=$('messages');
+ if(!box||box.dataset.historyScrollBound==='1')return;
+ box.dataset.historyScrollBound='1';
+ box.addEventListener('scroll',()=>{
+   if(!selected||historyLoading||!historyHasMore)return;
+   if(box.scrollTop<=120) loadOlderMessages();
+ },{passive:true});
+}
 $('messages').addEventListener('scroll',()=>{
  if($('messages').scrollTop<=80)loadOlderMessages();
 },{passive:true});
@@ -3055,6 +3067,7 @@ async function searchMessages(){
  let q=prompt('Поиск по сообщениям');if(!q)return;try{let r=await api('/api/search?q='+encodeURIComponent(q));openDrawer('<h2>🔍 Результаты</h2>'+ (r.map(m=>`<div class="user"><div class="uinfo"><div>${esc(m.text||m.file_name||'Файл')}</div><div class="preview">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('')||'<p>Ничего не найдено</p>'))}catch(e){showToast(e.message)}
 }
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
+initHistoryScroll();
 if(token)startApp();
 </script>
 </body>
