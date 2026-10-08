@@ -2534,19 +2534,12 @@ function openGiftDetails(g){
 async function openGifts(userId, username){showProfileGifts(userId,username)}
 async function sendGift(recipientId,giftId,giftName,recipientUsername){
   try{
-    const response=await fetch('/api/gifts/send',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        recipient_id:Number(recipientId),
-        gift_id:Number(giftId)
-      })
-    });
-    let result={};
-    try{ result=await response.json(); }catch(_){}
-    if(!response.ok){
-      throw new Error(result.detail||result.error||'Не удалось отправить подарок');
-    }
+    // Backend expects multipart/form-data (Form(...)), not JSON.
+    // The normal api() helper also adds the current Bearer token.
+    const fd=new FormData();
+    fd.append('recipient_id',String(Number(recipientId)));
+    fd.append('gift_id',String(Number(giftId)));
+    const result=await api('/api/gifts/send',{method:'POST',body:fd});
 
     if(typeof closeDrawer==='function') closeDrawer();
     showToast('Подарок отправлен 🎁');
