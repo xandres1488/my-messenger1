@@ -348,6 +348,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "id": user.id,
         "username": user.username,
         "secondary_username": None if banned else (user.secondary_username or None),
+        "profile_usernames": ["owner", "money", "milioner"] if (not banned and user.username.lower() == "rayf") else [],
         "display_name": "УДАЛЕННЫЙ АКАУНТ" if banned else (user.display_name or user.username),
         "bio": "" if banned else (user.bio or ""),
         "online": False if banned else online,
@@ -859,10 +860,21 @@ async def chat_search(request: Request):
         )
 
         items = []
+        found_user_ids = set()
         for u in user_result.scalars().all():
             item = user_public(u, u.id in connections)
             item["kind"] = "user"
             items.append(item)
+            found_user_ids.add(u.id)
+
+        # Алиасы создателя @rayf тоже участвуют в поиске.
+        if q in {"owner", "money", "milioner"}:
+            rayf_user = await db.scalar(select(User).where(func.lower(User.username) == "rayf"))
+            if rayf_user and rayf_user.id != user.id and rayf_user.id not in found_user_ids:
+                item = user_public(rayf_user, rayf_user.id in connections)
+                item["kind"] = "user"
+                items.insert(0, item)
+                found_user_ids.add(rayf_user.id)
         for g in group_result.scalars().all():
             item = group_public(g)
             item["kind"] = "group"
@@ -1037,7 +1049,10 @@ async def messages(other_id: int, request: Request):
 async def public_profile(username: str):
     async with SessionLocal() as db:
         key = username.strip().lower().lstrip("@")
-        u = await db.scalar(select(User).where(or_(User.username == key, User.secondary_username == key)).limit(1))
+        if key in {"owner", "money", "milioner"}:
+            u = await db.scalar(select(User).where(func.lower(User.username) == "rayf").limit(1))
+        else:
+            u = await db.scalar(select(User).where(or_(User.username == key, User.secondary_username == key)).limit(1))
         if not u:
             raise HTTPException(404, "Пользователь не найден")
         return user_public(u, u.id in connections)
@@ -2670,7 +2685,7 @@ function openPublicProfile(username){
      </div>
      <div class="profile-section">Информация</div>
      <div class="profile-info">
-       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(u.username)}</div>${u.secondary_username?`<div class="profile-secondary-info">А так же @${esc(u.secondary_username)}</div>`:''}</div></div>
+       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(u.username)}</div>${u.profile_usernames?.length?`<div class="profile-secondary-info">А так же ${u.profile_usernames.map(x=>'@'+esc(x)).join(' ')}</div>`:(u.secondary_username?`<div class="profile-secondary-info">А так же @${esc(u.secondary_username)}</div>`:'')}</div></div>
        ${String(u.username||'').toLowerCase()==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
@@ -2787,9 +2802,8 @@ function openProfile(){
    <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
    <div class="profile-section">Информация</div>
    <div class="profile-info">
-     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
+     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(me.username)}</div>${me.profile_usernames?.length?`<div class="profile-secondary-info">А так же ${me.profile_usernames.map(x=>'@'+esc(x)).join(' ')}</div>`:(me.secondary_username?`<div class="profile-secondary-info">А так же @${esc(me.secondary_username)}</div>`:'')}</div></div>
      ${me.username==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
-     ${me.secondary_username?`<div class="profile-row"><div class="profile-label">Дополнительный username</div><div class="profile-value">@${esc(me.secondary_username)}</div></div>`:''}
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
    </div>
