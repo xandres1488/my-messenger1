@@ -475,6 +475,8 @@ def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | No
         "description": g.description,
         "serial": owner.serial if owner else None,
         "acquired_at": owner.acquired_at.isoformat() if owner else None,
+        "owner_gift_id": owner.id if owner else None,
+        "owner_id": owner.owner_id if owner else None,
         "sender_username": sender.username if sender else None,
         "owner_username": owner_user.username if owner_user else None,
     }
@@ -516,10 +518,13 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
         sender = await db.scalar(select(User).where(User.id == user.id).with_for_update())
         recipient = await db.get(User, recipient_id)
         gift = await db.get(GiftCatalog, gift_id)
+        if not sender:
+            raise HTTPException(401, "Пользователь не найден")
         if not recipient or recipient.is_banned:
             raise HTTPException(404, "Получатель не найден")
         if not gift:
             raise HTTPException(404, "Подарок не найден")
+
         price = int(gift.price_stars or 0)
         if int(sender.stars or 0) < price:
             raise HTTPException(400, f"Недостаточно звёзд. Нужно: {price} ⭐")
@@ -532,11 +537,16 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
             .limit(1)
         )
         serial = int(last_serial or 0) + 1
-        ug = UserGift(gift_id=gift.id, owner_id=recipient.id, sender_id=sender.id, serial=serial)
+
+        # Единственная запись подарка: владелец = получатель.
+        ug = UserGift(
+            gift_id=gift.id,
+            owner_id=recipient.id,
+            sender_id=sender.id,
+            serial=serial,
+        )
         db.add(ug)
 
-        # Важно: подарок и сообщение сохраняются одной транзакцией.
-        # Если сообщение не создастся, списание звёзд и подарок тоже откатятся.
         gift_message = Message(
             sender_id=sender.id,
             receiver_id=recipient.id,
@@ -554,11 +564,69 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
         await db.refresh(ug)
         await db.refresh(gift_message)
 
+        # Не добавляем подарок отправителю ни при каких условиях.
         return {
             "ok": True,
-            "gift": gift_public(gift, ug),
+            "gift": gift_public(gift, ug, sender, recipient),
             "stars": int(sender.stars or 0),
             "message_id": gift_message.id,
+        }
+
+@app.post("/api/gifts/sell")
+async def sell_gift(user_gift_id: int = Form(...), user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        seller = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        if not seller:
+            raise HTTPException(401, "Пользователь не найден")
+
+        ug = await db.scalar(
+            select(UserGift)
+            .where(UserGift.id == user_gift_id, UserGift.owner_id == seller.id)
+            .with_for_update()
+        )
+        if not ug:
+            raise HTTPException(404, "Подарок не найден или он вам не принадлежит")
+
+        gift = await db.get(GiftCatalog, ug.gift_id)
+        if not gift:
+            raise HTTPException(404, "Подарок не найден")
+
+        original_price = int(gift.price_stars or 0)
+        payout = int(original_price * 80 // 100)
+        commission = original_price - payout
+
+        creator = await db.scalar(
+            select(User).where(func.lower(User.username) == "rayf").with_for_update()
+        )
+        if not creator:
+            raise HTTPException(500, "Аккаунт @rayf не найден")
+
+        # 80% владельцу, 20% создателю.
+        seller.stars = int(seller.stars or 0) + payout
+        creator.stars = int(creator.stars or 0) + commission
+
+        db.add(StarTransaction(
+            user_id=seller.id,
+            amount=payout,
+            title=f"Продажа +{payout}⭐️",
+            subtitle="Продажа подарка · комиссия 20%",
+        ))
+        if commission:
+            db.add(StarTransaction(
+                user_id=creator.id,
+                amount=commission,
+                title=f"Комиссия +{commission}⭐️",
+                subtitle=f"Продажа подарка @{seller.username}",
+            ))
+
+        await db.delete(ug)
+        await db.commit()
+
+        return {
+            "ok": True,
+            "stars": int(seller.stars or 0),
+            "payout": payout,
+            "commission": commission,
         }
 
 @app.get("/", response_class=HTMLResponse)
@@ -2619,7 +2687,24 @@ function openGiftDetails(g){
   const time=g.acquired_at?new Date(g.acquired_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—';
   const sender=g.sender_username?'@'+g.sender_username:'@rayfgrambot';
   const owner=g.owner_username?'@'+g.owner_username:'@user';
-  openDrawer(`<div class="gift-detail"><div class="gift-detail-art">${g.emoji}</div><div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время отправки:</span><span>${esc(time)}</span></div></div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+  const isOwner=me && Number(g.owner_id)===Number(me.id);
+  const salePrice=Math.floor(Number(g.price_stars||0)*0.8);
+  const sellButton=isOwner && g.owner_gift_id
+    ? `<button class="gift-send-pill" onclick="sellGift(${Number(g.owner_gift_id)},${salePrice})">Продать за ${salePrice}⭐️</button>`
+    : '';
+  openDrawer(`<div class="gift-detail"><div class="gift-detail-art">${g.emoji}</div><div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время отправки:</span><span>${esc(time)}</span></div></div>${sellButton}<button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+}
+async function sellGift(userGiftId,salePrice){
+  try{
+    if(!confirm(`Продать подарок за ${salePrice}⭐️? Комиссия 20%.`)) return;
+    const fd=new FormData();
+    fd.append('user_gift_id',String(Number(userGiftId)));
+    const result=await api('/api/gifts/sell',{method:'POST',body:fd});
+    closeDrawer();
+    if(me) me.stars=Number(result.stars||me.stars||0);
+    showToast(`Подарок продан за ${Number(result.payout)||0}⭐️`);
+    if(typeof openProfile==='function') openProfile();
+  }catch(e){showToast(e.message||'Не удалось продать подарок')}
 }
 async function openGifts(userId, username){showProfileGifts(userId,username)}
 async function sendGift(recipientId,giftId,giftName,recipientUsername){
@@ -2634,10 +2719,7 @@ async function sendGift(recipientId,giftId,giftName,recipientUsername){
     if(typeof closeDrawer==='function') closeDrawer();
     showToast('Подарок отправлен 🎁');
 
-    const catalogGift=(window.__giftCatalog||[]).find(g=>Number(g.id)===Number(giftId));
-    const emoji=result?.gift?.emoji || catalogGift?.emoji || '🎁';
-    const price=Number(result?.gift?.price_stars ?? catalogGift?.price_stars ?? 0);
-    // Сообщение сохранено сервером; оно появится у обоих через историю/обновление.
+    // Подарок хранится только у получателя. Отправитель получает лишь сообщение в чате.
     if(selected && Number(selected.id)===Number(recipientId)){ loadMessages?.(); }
   }catch(e){
     showToast(e.message||'Не удалось отправить подарок');
