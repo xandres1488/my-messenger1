@@ -2741,6 +2741,7 @@ function openPublicProfile(username){
      <div class="profile-section">Информация</div>
      <div class="profile-info">
        <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(u.username)}</div>${u.secondary_username?`<div class="profile-secondary-info">А так же @${esc(u.secondary_username)}</div>`:''}</div></div>
+       ${u.username==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
        ${String(u.username||'').toLowerCase()==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
@@ -2858,6 +2859,7 @@ function openProfile(){
    <div class="profile-section">Информация</div>
    <div class="profile-info">
      <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
+     ${me.username==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
      ${me.secondary_username?`<div class="profile-row"><div class="profile-label">Дополнительный username</div><div class="profile-value">@${esc(me.secondary_username)}</div></div>`:''}
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
