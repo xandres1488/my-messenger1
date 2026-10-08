@@ -328,6 +328,42 @@ async def init_db():
         """)
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_seller_id ON nft_market_listings(seller_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_created_at ON nft_market_listings(created_at)")
+        # Безопасно восстанавливаем уникальность серийных номеров перед созданием индекса.
+        # В старых версиях базы могли остаться одинаковые serial у одного типа подарка.
+        await conn.exec_driver_sql("""
+            WITH ranked AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY gift_id ORDER BY id) AS rn
+                FROM user_gifts
+            )
+            UPDATE user_gifts ug
+            SET serial = ranked.rn
+            FROM ranked
+            WHERE ug.id = ranked.id
+              AND ug.serial IS NULL
+        """)
+        await conn.exec_driver_sql("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM (
+                        SELECT gift_id, serial, COUNT(*) AS c
+                        FROM user_gifts
+                        GROUP BY gift_id, serial
+                        HAVING COUNT(*) > 1
+                    ) d
+                ) THEN
+                    WITH ranked AS (
+                        SELECT id, ROW_NUMBER() OVER (PARTITION BY gift_id ORDER BY id) AS rn
+                        FROM user_gifts
+                    )
+                    UPDATE user_gifts ug
+                    SET serial = ranked.rn
+                    FROM ranked
+                    WHERE ug.id = ranked.id;
+                END IF;
+            END $$;
+        """)
         await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
