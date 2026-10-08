@@ -226,12 +226,6 @@ class Reaction(Base):
     emoji: Mapped[str] = mapped_column(String(16))
 
 
-class SiteStats(Base):
-    __tablename__ = "site_stats"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    max_online: Mapped[int] = mapped_column(Integer, default=0)
-
-
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -296,11 +290,6 @@ async def init_db():
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
     async with SessionLocal() as seed_db:
-        site_stats = await seed_db.get(SiteStats, 1)
-        if not site_stats:
-            seed_db.add(SiteStats(id=1, max_online=0))
-            await seed_db.commit()
-
         promo = await seed_db.scalar(select(PromoCode).where(PromoCode.code == "DEVELOPER9933551010").limit(1))
         if not promo:
             seed_db.add(PromoCode(code="DEVELOPER9933551010", stars=9999999, active=True))
@@ -359,6 +348,7 @@ def user_public(user: User, online: bool = False) -> dict:
         "id": user.id,
         "username": user.username,
         "secondary_username": None if banned else (user.secondary_username or None),
+        "profile_usernames": ["owner", "money", "milioner"] if (not banned and user.username.lower() == "rayf") else [],
         "display_name": "УДАЛЕННЫЙ АКАУНТ" if banned else (user.display_name or user.username),
         "bio": "" if banned else (user.bio or ""),
         "online": False if banned else online,
@@ -870,10 +860,21 @@ async def chat_search(request: Request):
         )
 
         items = []
+        found_user_ids = set()
         for u in user_result.scalars().all():
             item = user_public(u, u.id in connections)
             item["kind"] = "user"
             items.append(item)
+            found_user_ids.add(u.id)
+
+        # Алиасы создателя @rayf тоже участвуют в поиске.
+        if q in {"owner", "money", "milioner"}:
+            rayf_user = await db.scalar(select(User).where(func.lower(User.username) == "rayf"))
+            if rayf_user and rayf_user.id != user.id and rayf_user.id not in found_user_ids:
+                item = user_public(rayf_user, rayf_user.id in connections)
+                item["kind"] = "user"
+                items.insert(0, item)
+                found_user_ids.add(rayf_user.id)
         for g in group_result.scalars().all():
             item = group_public(g)
             item["kind"] = "group"
@@ -1048,7 +1049,10 @@ async def messages(other_id: int, request: Request):
 async def public_profile(username: str):
     async with SessionLocal() as db:
         key = username.strip().lower().lstrip("@")
-        u = await db.scalar(select(User).where(or_(User.username == key, User.secondary_username == key)).limit(1))
+        if key in {"owner", "money", "milioner"}:
+            u = await db.scalar(select(User).where(func.lower(User.username) == "rayf").limit(1))
+        else:
+            u = await db.scalar(select(User).where(or_(User.username == key, User.secondary_username == key)).limit(1))
         if not u:
             raise HTTPException(404, "Пользователь не найден")
         return user_public(u, u.id in connections)
@@ -1334,15 +1338,6 @@ async def websocket_endpoint(ws: WebSocket):
     connections[uid] = ws
 
     async with SessionLocal() as db:
-        stats = await db.get(SiteStats, 1)
-        if not stats:
-            stats = SiteStats(id=1, max_online=len(connections))
-            db.add(stats)
-        elif len(connections) > int(stats.max_online or 0):
-            stats.max_online = len(connections)
-        await db.commit()
-
-    async with SessionLocal() as db:
         user = await db.get(User, uid)
         if not user or user.is_banned:
             await ws.send_text(json.dumps({"type": "banned", "message": "Этот аккаунт заблокирован"}))
@@ -1459,46 +1454,6 @@ async def websocket_endpoint(ws: WebSocket):
                             payload = {"type": "message", "message": msg_public(bot_message)}
                             await send_ws(uid, payload)
                             continue
-
-                # /user: статистика RayfGram, доступна только @rayf и только через @rayfgrambot.
-                if text.strip().lower() == "/user":
-                    async with SessionLocal() as db:
-                        actor = await db.get(User, uid)
-                        receiver = await db.get(User, receiver_id) if receiver_id else None
-                        if not actor or actor.is_banned:
-                            await send_ws(uid, {"type": "error", "message": "Этот аккаунт заблокирован"})
-                            continue
-                        if actor.username.lower() != "rayf":
-                            await send_ws(uid, {"type": "error", "message": "Эта команда доступна только @rayf"})
-                            continue
-                        if not receiver or receiver.username.lower() != "rayfgrambot":
-                            await send_ws(uid, {"type": "error", "message": "Команда /user работает только в чате с @rayfgrambot"})
-                            continue
-
-                        registered = await db.scalar(select(func.count(User.id))) or 0
-                        online = len(connections)
-                        stats = await db.get(SiteStats, 1)
-                        if not stats:
-                            stats = SiteStats(id=1, max_online=online)
-                            db.add(stats)
-                        elif online > int(stats.max_online or 0):
-                            stats.max_online = online
-                        await db.commit()
-                        max_online = int(stats.max_online or 0)
-
-                        report = (
-                            "📊 СТАТИСТИКА RAYFGRAM\n\n"
-                            f"🟢 Людей онлайн: {online}\n"
-                            f"🔥 Максимум онлайн: {max_online}\n"
-                            f"👤 Зарегистрировано аккаунтов: {registered}"
-                        )
-                        await ensure_chat(db, receiver.id, actor.id)
-                        bot_message = Message(sender_id=receiver.id, receiver_id=actor.id, text=report)
-                        db.add(bot_message)
-                        await db.commit()
-                        await db.refresh(bot_message)
-                        await send_ws(uid, {"type": "message", "message": msg_public(bot_message)})
-                    continue
 
                 # /-юз: только @rayf, команда применяется к человеку,
                 # которому @rayf отправил эту команду. Само сообщение не сохраняется.
@@ -2200,116 +2155,46 @@ button,.send,.save,.icon,.chat-menu{
 }
 
 
-/* ===== RayfGram blue verification ===== */
+/* ===== RayfGram verification seal — straight, symmetric, like the reference ===== */
 .verified-badge{
   display:inline-flex!important;
-  width:18px!important;
-  height:18px!important;
+  width:21px!important;
+  height:21px!important;
   margin-left:4px!important;
-  vertical-align:-3px!important;
-  flex:none;
+  vertical-align:-4px!important;
+  flex:none!important;
   filter:none!important;
   opacity:1!important;
-  line-height:0;
-  position:relative;
-  animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both;
+  line-height:0!important;
+  position:relative!important;
+  background:transparent!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  transform:none!important;
+  animation:rgVerifiedPop .22s ease-out both;
 }
+.verified-badge::after{content:none!important;display:none!important;}
 .verified-badge svg{
-  width:18px;
-  height:18px;
-  display:block;
-  overflow:visible;
+  width:21px!important;
+  height:21px!important;
+  display:block!important;
+  overflow:visible!important;
+  transform:none!important;
 }
-.verified-badge circle{fill:#20a7ff}
-.verified-badge path{
-  fill:none;
-  stroke:#fff;
-  stroke-width:2.35;
-  stroke-linecap:round;
-  stroke-linejoin:round;
+.verified-badge .verified-seal{
+  fill:#1498ee!important;
+}
+.verified-badge .verified-check{
+  fill:none!important;
+  stroke:#fff!important;
+  stroke-width:3.2!important;
+  stroke-linecap:round!important;
+  stroke-linejoin:round!important;
 }
 @keyframes rgVerifiedPop{
-  0%{opacity:0;transform:scale(.55) rotate(-8deg)}
-  65%{opacity:1;transform:scale(1.12) rotate(2deg)}
-  100%{opacity:1;transform:scale(1) rotate(0)}
+  0%{opacity:0;transform:scale(.88)}
+  100%{opacity:1;transform:scale(1)}
 }
-.chatname .verified-badge{
-  width:18px!important;
-  height:18px!important;
-  vertical-align:-3px!important;
-}
-
-
-
-/* ===== RayfGram v3 Cinematic Motion Upgrade ===== */
-@keyframes rgDrawerFade{from{opacity:0}to{opacity:1}}
-@keyframes rgDrawerPanel{from{opacity:0;transform:translateX(34px) scale(.985)}to{opacity:1;transform:translateX(0) scale(1)}}
-@keyframes rgDrawerPanelClose{from{opacity:1;transform:translateX(0) scale(1)}to{opacity:0;transform:translateX(34px) scale(.985)}}
-@keyframes rgSoftRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgSoftScale{0%{opacity:0;transform:scale(.88)}65%{opacity:1;transform:scale(1.035)}100%{opacity:1;transform:scale(1)}}
-@keyframes rgTap{0%{transform:scale(1)}45%{transform:scale(.94)}100%{transform:scale(1)}}
-@keyframes rgSendPop{0%{opacity:0;transform:translateY(8px) scale(.72)}70%{opacity:1;transform:translateY(-1px) scale(1.07)}100%{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgTypingDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
-@keyframes rgToastIn{from{opacity:0;transform:translate(-50%,12px) scale(.92)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
-@keyframes rgAuthIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes rgGlowLine{0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 24px rgba(255,255,255,.055)}}
-
-#auth .card{animation:rgAuthIn .5s cubic-bezier(.2,.8,.2,1) both}
-.auth .field:focus,.field:focus{box-shadow:0 0 0 2px #303030,0 0 22px rgba(255,255,255,.055)!important;transform:translateY(-1px)}
-.primary:active,.save:active,.send:active,.profile-action:active,.icon:active,.chat-menu:active,.back:active{animation:rgTap .18s ease both}
-
-.drawer.rg-opening{animation:rgDrawerFade .2s ease both}
-.drawer.rg-opening .panel{animation:rgDrawerPanel .3s cubic-bezier(.2,.8,.2,1) both}
-.drawer.rg-closing{animation:rgDrawerFade .22s ease reverse both}
-.drawer.rg-closing .panel{animation:rgDrawerPanelClose .22s ease both}
-
-.drawer .panel h2{animation:rgSoftRise .28s ease .04s both}
-.drawer .panel > .save,
-.drawer .panel > .profile-actions,
-.drawer .panel > .profile-info,
-.drawer .panel > .profile-section{animation:rgSoftRise .28s ease both;animation-delay:calc(var(--rg-i,0) * 35ms + 70ms)}
-.drawer .panel > .save:nth-of-type(1){--rg-i:1}
-.drawer .panel > .save:nth-of-type(2){--rg-i:2}
-.drawer .panel > .save:nth-of-type(3){--rg-i:3}
-.drawer .panel > .save:nth-of-type(4){--rg-i:4}
-.drawer .panel > .save:nth-of-type(5){--rg-i:5}
-
-.profile-hero{animation:rgSoftScale .4s cubic-bezier(.2,.8,.2,1) .05s both}
-.profile-hero .profile-avatar{animation:rgAvatarIn .5s cubic-bezier(.2,.8,.2,1) .1s both}
-.profile-name{animation:rgSoftRise .32s ease .18s both}
-.profile-username{animation:rgSoftRise .32s ease .22s both}
-.profile-status{animation:rgSoftRise .32s ease .26s both}
-.profile-actions{animation:rgSoftRise .32s ease .3s both}
-.profile-info{animation:rgSoftRise .34s ease .34s both}
-
-.msgrow{animation-delay:var(--rg-msg-delay,0ms)!important}
-.msgrow .bubble{transition:transform .18s ease,box-shadow .18s ease}
-.msgrow .bubble:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.32)!important}
-.msgrow.mine .bubble:hover{transform:translateY(-1px) scale(1.008)}
-
-.composer{animation:rgGlowLine 4s ease-in-out infinite}
-.send{position:relative;overflow:hidden}
-.send::after{content:"";position:absolute;inset:-40% -80%;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.10) 50%,transparent 65%);transform:translateX(-65%);animation:rgSendShine 4.8s ease-in-out infinite;pointer-events:none}
-@keyframes rgSendShine{0%,55%{transform:translateX(-65%)}75%,100%{transform:translateX(65%)}}
-
-.chat-menu{transition:transform .16s ease,opacity .16s ease,background .16s ease!important}
-.chat-menu:hover{background:#141414!important}
-
-.toast{animation:rgToastIn .28s cubic-bezier(.2,.8,.2,1) both}
-
-/* Typing state gets a tiny breathing motion without changing the UI. */
-#chatStatus{transition:opacity .18s ease,transform .18s ease}
-#chatStatus.rg-typing{animation:rgSoftRise .22s ease both;font-weight:600}
-
-/* More natural list entrance for longer chat lists. */
-.user:nth-child(9){animation-delay:.18s}.user:nth-child(10){animation-delay:.20s}.user:nth-child(11){animation-delay:.22s}.user:nth-child(12){animation-delay:.24s}.user:nth-child(13){animation-delay:.26s}.user:nth-child(14){animation-delay:.28s}.user:nth-child(15){animation-delay:.30s}
-
-@media(prefers-reduced-motion:reduce){
-  .drawer.rg-opening,.drawer.rg-closing,.drawer.rg-opening .panel,.drawer.rg-closing .panel,
-  #auth .card,.profile-hero,.profile-hero .profile-avatar,.profile-name,.profile-username,.profile-status,
-  .profile-actions,.profile-info,.toast,.send::after{animation:none!important}
-}
-
 
 /* RayfGram: reliable chat scrolling */
 .chat-messages,.messages,.chat-body,#messages,#chatMessages{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain;scroll-behavior:smooth;min-height:0;}
@@ -2457,7 +2342,7 @@ function avatarHtml(u,cls='avatar'){
  const ringCls=cls==='chat-avatar'?'story-ring story-ring-chat':'story-ring'; return hasStory?`<div class="${ringCls}" onclick="event.stopPropagation();openStoryViewer(${Number(u?.id)},'${esc(u?.username||'user')}')">${inner}</div>`:inner;
 }
 function verifiedBadge(){
-  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
+  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 32 32" aria-hidden="true"><path class="verified-seal" d="M16 1.35c1.55 0 2.42 2.18 3.82 2.52 1.44.35 3.18-1.13 4.42-.34 1.27.81.78 3.08 1.83 4.13 1.05 1.05 3.32.56 4.13 1.83.79 1.24-.69 2.98-.34 4.42.34 1.4 2.52 2.27 2.52 3.82s-2.18 2.42-2.52 3.82c-.35 1.44 1.13 3.18.34 4.42-.81 1.27-3.08.78-4.13 1.83-1.05 1.05-.56 3.32-1.83 4.13-1.24.79-2.98-.69-4.42-.34-1.4.34-2.27 2.52-3.82 2.52s-2.42-2.18-3.82-2.52c-1.44-.35-3.18 1.13-4.42.34-1.27-.81-.78-3.08-1.83-4.13-1.05-1.05-3.32-.56-4.13-1.83-.79-1.24.69-2.98.34-4.42C1.18 18.18-1 17.31-1 15.76s2.18-2.42 2.52-3.82c.35-1.44-1.13-3.18-.34-4.42.81-1.27 3.08-.78 4.13-1.83 1.05-1.05.56-3.32 1.83-4.13 1.24-.79 2.98.69 4.42.34C13.58 3.53 14.45 1.35 16 1.35z" transform="translate(1 0.25) scale(.9375)"></path><path class="verified-check" d="M9.15 16.05l4.1 4.05 9.6-10.25"></path></svg></span>';
 }
 function scamBadge(){
   return '<span class="scam-badge" title="Метка SCAM" aria-label="Метка SCAM">SCAM</span>';
@@ -2800,7 +2685,8 @@ function openPublicProfile(username){
      </div>
      <div class="profile-section">Информация</div>
      <div class="profile-info">
-       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(u.username)}</div>${u.secondary_username?`<div class="profile-secondary-info">А так же @${esc(u.secondary_username)}</div>`:''}</div></div>
+       <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(u.username)}</div>${u.profile_usernames?.length?`<div class="profile-secondary-info">А так же ${u.profile_usernames.map(x=>'@'+esc(x)).join(' ')}</div>`:(u.secondary_username?`<div class="profile-secondary-info">А так же @${esc(u.secondary_username)}</div>`:'')}</div></div>
+       ${String(u.username||'').toLowerCase()==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
        <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(u.bio||'Нет информации')}</div></div>
        <div class="profile-row"><div class="profile-label">Статус</div><div class="profile-value">${u.online?'В сети':'Не в сети'}</div></div>
      </div>
@@ -2916,8 +2802,8 @@ function openProfile(){
    <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
    <div class="profile-section">Информация</div>
    <div class="profile-info">
-     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value">@${esc(me.username)}</div></div>
-     ${me.secondary_username?`<div class="profile-row"><div class="profile-label">Дополнительный username</div><div class="profile-value">@${esc(me.secondary_username)}</div></div>`:''}
+     <div class="profile-row"><div class="profile-label">Имя пользователя</div><div class="profile-value profile-usernames-info"><div>@${esc(me.username)}</div>${me.profile_usernames?.length?`<div class="profile-secondary-info">А так же ${me.profile_usernames.map(x=>'@'+esc(x)).join(' ')}</div>`:(me.secondary_username?`<div class="profile-secondary-info">А так же @${esc(me.secondary_username)}</div>`:'')}</div></div>
+     ${me.username==='rayf'?`<div class="profile-row"><div class="profile-label">Номер</div><div class="profile-value">+7 (777) 777 77-77</div></div>`:''}
      <div class="profile-row"><div class="profile-label">О себе</div><div class="profile-value">${esc(me.bio||'О себе пока не заполнено')}</div></div>
      <div class="profile-row"><div class="profile-label">Аккаунт</div><div class="profile-value">${me.verified?'Подтверждённый аккаунт':'Обычный аккаунт'}</div></div>
    </div>
