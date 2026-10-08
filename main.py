@@ -248,18 +248,21 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
         await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
-        async with SessionLocal() as seed_db:
-            existing = await seed_db.scalar(select(GiftCatalog).limit(1))
-            if not existing:
-                seed_db.add_all([
-                    GiftCatalog(code="heart_glow", name="Сияющее сердце", emoji="💖", rarity="Обычный", collection="RayfGram Gifts", price_stars=25, description="Тёплый подарок для близкого человека."),
-                    GiftCatalog(code="rose_crystal", name="Кристальная роза", emoji="🌹", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Коллекционная роза с хрустальным блеском."),
-                    GiftCatalog(code="golden_duck", name="Золотая уточка", emoji="🦆", rarity="Редкий", collection="RayfGram Icons", price_stars=75, description="Золотой символ удачи RayfGram."),
-                    GiftCatalog(code="diamond_star", name="Алмазная звезда", emoji="💎", rarity="Эпический", collection="RayfGram Icons", price_stars=150, description="Яркий коллекционный подарок высокой редкости."),
-                    GiftCatalog(code="cosmic_cat", name="Космический кот", emoji="🐱", rarity="Эпический", collection="RayfGram Space", price_stars=250, description="Кот из космической коллекции."),
-                    GiftCatalog(code="royal_crown", name="Корона Rayf", emoji="👑", rarity="Легендарный", collection="RayfGram Royals", price_stars=500, description="Редкая корона для настоящей легенды."),
-                ])
-                await seed_db.commit()
+
+    # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
+    # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
+    async with SessionLocal() as seed_db:
+        existing = await seed_db.scalar(select(GiftCatalog).limit(1))
+        if not existing:
+            seed_db.add_all([
+                GiftCatalog(code="heart_glow", name="Сияющее сердце", emoji="💖", rarity="Обычный", collection="RayfGram Gifts", price_stars=25, description="Тёплый подарок для близкого человека."),
+                GiftCatalog(code="rose_crystal", name="Кристальная роза", emoji="🌹", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Коллекционная роза с хрустальным блеском."),
+                GiftCatalog(code="golden_duck", name="Золотая уточка", emoji="🦆", rarity="Редкий", collection="RayfGram Icons", price_stars=75, description="Золотой символ удачи RayfGram."),
+                GiftCatalog(code="diamond_star", name="Алмазная звезда", emoji="💎", rarity="Эпический", collection="RayfGram Icons", price_stars=150, description="Яркий коллекционный подарок высокой редкости."),
+                GiftCatalog(code="cosmic_cat", name="Космический кот", emoji="🐱", rarity="Эпический", collection="RayfGram Space", price_stars=250, description="Кот из космической коллекции."),
+                GiftCatalog(code="royal_crown", name="Корона Rayf", emoji="👑", rarity="Легендарный", collection="RayfGram Royals", price_stars=500, description="Редкая корона для настоящей легенды."),
+            ])
+            await seed_db.commit()
 
 
 @app.on_event("startup")
