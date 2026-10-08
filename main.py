@@ -196,6 +196,17 @@ class StarTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class Story(Base):
+    __tablename__ = "stories"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    media_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class UserGift(Base):
     __tablename__ = "user_gifts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -480,6 +491,79 @@ def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | No
         "sender_username": sender.username if sender else None,
         "owner_username": owner_user.username if owner_user else None,
     }
+
+@app.post("/api/stories")
+async def create_story(file: UploadFile = File(...), user: User = Depends(current_user)):
+    content_type = (file.content_type or "").lower()
+    if not (content_type.startswith("image/") or content_type.startswith("video/")):
+        raise HTTPException(400, "Для сторис можно выбрать только фото или видео")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Файл пустой")
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, "Файл для сторис максимум 8 МБ")
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        # Старые сторис больше не нужны в активной ленте.
+        await db.execute(select(Story).where(Story.user_id == user.id, Story.expires_at <= now))
+        story = Story(
+            user_id=user.id,
+            media_data=data,
+            media_type=content_type,
+            file_name=file.filename or "story",
+            created_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        db.add(story)
+        await db.commit()
+        await db.refresh(story)
+        return {"ok": True, "id": story.id, "expires_at": story.expires_at.isoformat()}
+
+
+@app.get("/api/stories/summary")
+async def story_summary(user: User = Depends(current_user)):
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        rows = await db.execute(
+            select(Story.user_id, func.count(Story.id))
+            .where(Story.expires_at > now)
+            .group_by(Story.user_id)
+        )
+        return [{"user_id": int(uid), "count": int(count)} for uid, count in rows.all()]
+
+
+@app.get("/api/stories/user/{user_id}")
+async def user_stories(user_id: int, user: User = Depends(current_user)):
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        target = await db.get(User, user_id)
+        if not target or target.is_banned:
+            raise HTTPException(404, "Пользователь не найден")
+        result = await db.execute(
+            select(Story)
+            .where(Story.user_id == user_id, Story.expires_at > now)
+            .order_by(Story.created_at)
+        )
+        stories = result.scalars().all()
+        return [{
+            "id": x.id,
+            "user_id": x.user_id,
+            "media_url": f"/api/stories/media/{x.id}",
+            "media_type": x.media_type,
+            "created_at": x.created_at.isoformat(),
+            "expires_at": x.expires_at.isoformat(),
+        } for x in stories]
+
+
+@app.get("/api/stories/media/{story_id}")
+async def story_media(story_id: int):
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        story = await db.get(Story, story_id)
+        if not story or story.expires_at <= now:
+            raise HTTPException(404, "Сторис не найдена")
+        return Response(content=story.media_data, media_type=story.media_type)
+
 
 @app.get("/api/gifts/catalog")
 async def gift_catalog(user: User = Depends(current_user)):
@@ -1737,6 +1821,22 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#263b4a;color:#fff;padding:11px 16px;border-radius:10px;z-index:30;box-shadow:0 5px 25px #0008}
 @media(max-width:700px){.panel{width:100%;padding:14px 16px}.drawer{background:#0e1621}.sidebar{max-width:none;width:100%}.chat{display:none}.sidebar.chat-open{display:none}.chat.chat-open{display:flex}.chathead .back{display:block}.messages{padding:14px 4%}.bubble{max-width:84%}}
 
+
+.story-camera-wrap{display:flex;justify-content:center;align-items:center;padding:8px 10px 4px}
+.story-camera-btn{width:52px;height:52px;border-radius:18px;border:1px solid #2d3940;background:#151b1f;color:#fff;font-size:24px;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .16s ease,box-shadow .16s ease}
+.story-camera-btn:active{transform:scale(.92)}
+.story-ring{width:58px;height:58px;flex:0 0 58px;border-radius:50%;padding:3px;background:linear-gradient(135deg,#19d3c5,#1577ff,#20e3b2);box-shadow:0 0 14px rgba(26,206,205,.24);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.story-ring>.avatar{width:52px;height:52px;box-shadow:0 0 0 2px #101010}
+.story-profile-ring{width:140px;height:140px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.story-profile-ring.has-story{padding:4px;background:linear-gradient(135deg,#19d3c5,#1577ff,#20e3b2);box-shadow:0 0 22px rgba(26,206,205,.28)}
+.story-profile-ring .profile-avatar{margin:0!important}
+.story-viewer{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.story-viewer-top{width:100%;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:14px}
+.story-viewer-top span{color:#9ba8b0;font-size:12px}
+.story-progress{width:100%;display:flex;gap:4px}.story-progress span{height:3px;flex:1;border-radius:4px;background:#30383e}.story-progress span.on{background:#fff}
+.story-stage{position:relative;width:min(100%,430px);height:min(70vh,680px);display:flex;align-items:center;justify-content:center;background:#050607;border-radius:22px;overflow:hidden}
+.story-media{width:100%;height:100%;object-fit:contain;background:#050607}
+.story-nav{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:42px;border-radius:50%;border:1px solid #ffffff33;background:#0008;color:#fff;font-size:32px;line-height:1}.story-prev{left:10px}.story-next{right:10px}
 .bottom-nav{display:none}
 @media(max-width:700px){
  .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:8px 10px 10px;padding:5px;background:#20262d;border:1px solid #2a3037;border-radius:28px}
@@ -2160,6 +2260,7 @@ button,.send,.save,.icon,.chat-menu{
    <input id="search" class="search" placeholder="🔍 Найти пользователя или чат" oninput="loadUsers()">
  </div>
  <div id="userlist" class="userlist"></div>
+ <div class="story-camera-wrap"><button class="story-camera-btn" onclick="storyPick.click()" aria-label="Добавить сторис">📷</button><input id="storyPick" type="file" accept="image/*,video/*" hidden onchange="uploadStory()"></div>
  <nav class="bottom-nav">
    <button class="active" onclick="navChats()"><span class="nav-ico">💬</span>Чаты</button>
    <button onclick="navContacts()"><span class="nav-ico">👤</span>Контакты</button>
@@ -2201,12 +2302,17 @@ button,.send,.save,.icon,.chat-menu{
 <script>
 let token=localStorage.getItem('rayf_token');
 let me=null, users=[], selected=null, ws=null, reconnectTimer=null, pendingFile=null, editingId=null, pingTimer=null;
+let storyUserIds=new Set(), storyViewerItems=[], storyViewerIndex=0;
 let typingTimer=null, isTyping=false, typingUserId=null;
 const $=id=>document.getElementById(id);
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function initials(u){return esc((u?.display_name||u?.username||'?').slice(0,1).toUpperCase());}
-function avatarHtml(u,cls='avatar'){return u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;}
+function avatarHtml(u,cls='avatar'){
+ const hasStory=storyUserIds.has(Number(u?.id));
+ const inner=u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;
+ return hasStory?`<div class="story-ring" onclick="event.stopPropagation();openStoryViewer(${Number(u?.id)},'${esc(u?.username||'user')}')">${inner}</div>`:inner;
+}
 function verifiedBadge(){
   return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
 }
@@ -2246,7 +2352,7 @@ async function register(){
  try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
- try{me=normalizeVerified(await api('/api/me'));normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
+ try{me=normalizeVerified(await api('/api/me'));normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();await loadStorySummary();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
 }
 function connect(){
  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
@@ -2539,7 +2645,7 @@ function openPublicProfile(username){
    openDrawer(`<div class="profile-page">
      <div class="profile-hero" style="background:${profileBgStyle(u.profile_bg)};color:${profileBgTextColor(u.profile_bg)}">
        ${String(me?.username||'').toLowerCase()===String(u.username||'').toLowerCase()?`<button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(u.username)}','${u.profile_bg||'gray'}')">⋮</button><div id="profileBgMenu"></div>`:''}
-       <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
+       <div class="story-profile-ring ${storyUserIds.has(Number(u.id))?'has-story':''}" onclick="storyUserIds.has(Number(u.id))&&openStoryViewer(u.id,u.username)"><div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div></div>
        <div class="profile-name">${isCreatorAccount(u)?creatorPin():''}${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
        <div class="profile-username">@${esc(u.username)}</div>
        <div class="profile-status">был(а) недавно</div>
@@ -2596,6 +2702,47 @@ function creatorPin(){
 }
 function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayf'; }
 
+async function loadStorySummary(){
+  try{
+    const rows=await api('/api/stories/summary');
+    storyUserIds=new Set(rows.map(x=>Number(x.user_id)));
+    if(me)me.has_story=storyUserIds.has(Number(me.id));
+    renderUsers();
+  }catch(e){}
+}
+async function uploadStory(){
+  const f=$('storyPick')?.files?.[0];
+  if(!f)return;
+  if(f.size>8*1024*1024){showToast('Сторис максимум 8 МБ');$('storyPick').value='';return}
+  if(!(f.type.startsWith('image/')||f.type.startsWith('video/'))){showToast('Можно выбрать только фото или видео');$('storyPick').value='';return}
+  try{
+    const fd=new FormData();fd.append('file',f);
+    await api('/api/stories',{method:'POST',body:fd});
+    $('storyPick').value='';
+    await loadStorySummary();
+    showToast('Сторис опубликована на 24 часа');
+    if(!$('drawer').classList.contains('hidden'))openProfile();
+  }catch(e){showToast(e.message||'Не удалось опубликовать сторис');$('storyPick').value=''}
+}
+async function openStoryViewer(userId,username){
+  try{
+    const stories=await api('/api/stories/user/'+Number(userId));
+    if(!stories.length){showToast('Активных сторис пока нет');return}
+    storyViewerItems=stories;storyViewerIndex=0;
+    renderStoryViewer(username||'user');
+  }catch(e){showToast(e.message||'Не удалось открыть сторис')}
+}
+function renderStoryViewer(username){
+  const s=storyViewerItems[storyViewerIndex];
+  if(!s)return;
+  const isVideo=String(s.media_type||'').startsWith('video/');
+  const media=isVideo?`<video class="story-media" src="${s.media_url}" autoplay controls playsinline></video>`:`<img class="story-media" src="${s.media_url}" alt="Сторис">`;
+  const prev=storyViewerIndex>0?`<button class="story-nav story-prev" onclick="storyViewerIndex--;renderStoryViewer('${esc(username)}')">‹</button>`:'';
+  const next=storyViewerIndex<storyViewerItems.length-1?`<button class="story-nav story-next" onclick="storyViewerIndex++;renderStoryViewer('${esc(username)}')">›</button>`:'';
+  const when=new Date(s.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  openDrawer(`<div class="story-viewer"><div class="story-viewer-top"><b>@${esc(username)}</b><span>${storyViewerIndex+1}/${storyViewerItems.length} · ${when}</span></div><div class="story-progress">${storyViewerItems.map((_,i)=>`<span class="${i<=storyViewerIndex?'on':''}"></span>`).join('')}</div><div class="story-stage">${media}${prev}${next}</div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
+}
+
 function openProfile(){
  const v=me?.verified?verifiedBadge():'';
  const scam=me?.scam?scamBadge():'';
@@ -2604,7 +2751,7 @@ function openProfile(){
    <div class="profile-hero" style="background:${profileBgStyle(me?.profile_bg||'gray')};color:${profileBgTextColor(me?.profile_bg||'gray')}">
      <button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(me?.username||'')}','${me?.profile_bg||'gray'}')">⋮</button>
      <div id="profileBgMenu"></div>
-     <div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div>
+     <div class="story-profile-ring ${storyUserIds.has(Number(me?.id))?'has-story':''}" onclick="storyUserIds.has(Number(me?.id))&&openStoryViewer(me.id,me.username)"><div class="profile-avatar">${me?.avatar?`<img src="${me.avatar}?t=${Date.now()}">`:initials(me)}</div></div>
      <div class="profile-name">${isCreatorAccount(me)?creatorPin():''}${esc(me.display_name||me.username)} ${v}${scam}</div>
      <div class="profile-username">@${esc(me.username)}</div>
      <div class="profile-status">${status}</div>
