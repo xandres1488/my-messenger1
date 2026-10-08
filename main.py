@@ -2348,7 +2348,7 @@ function closeDrawer(){
  },220);
 }
 function creatorPin(){
-  return '<button class="creator-pin" type="button" title="Пин создателя" aria-label="Пин создателя" onclick="event.stopPropagation();showToast('это пин создателя')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.55 6.1 6.45.55-4.9 4.25 1.48 6.32L12 16.35 6.42 19.72 7.9 13.4 3 9.15l6.45-.55L12 2.5z"></path></svg></button>';
+  return `<button class="creator-pin" type="button" title="Пин создателя" aria-label="Пин создателя" onclick="event.stopPropagation();showToast('это пин создателя')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.55 6.1 6.45.55-4.9 4.25 1.48 6.32L12 16.35 6.42 19.72 7.9 13.4 3 9.15l6.45-.55L12 2.5z"></path></svg></button>`;
 }
 function isCreatorAccount(u){ return String(u?.username||'').toLowerCase()==='rayfl'; }
 
