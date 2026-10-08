@@ -2520,6 +2520,7 @@ async function showProfileGifts(userId, username){
 async function openGiftCatalog(recipientId, recipientUsername){
   try{
     const catalog=await api('/api/gifts/catalog');
+    window.__giftCatalog=catalog;
     const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.05}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
     openDrawer(`<h2>🎁 Подарки</h2><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
   }catch(e){showToast(e.message)}
@@ -2533,19 +2534,28 @@ function openGiftDetails(g){
 async function openGifts(userId, username){showProfileGifts(userId,username)}
 async function sendGift(recipientId,giftId,giftName,recipientUsername){
   try{
-    const result=await api('/api/gifts/send',{
+    const response=await fetch('/api/gifts/send',{
       method:'POST',
-      body:JSON.stringify({recipient_id:Number(recipientId),gift_id:Number(giftId)})
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        recipient_id:Number(recipientId),
+        gift_id:Number(giftId)
+      })
     });
-    closeDrawer?.();
+    let result={};
+    try{ result=await response.json(); }catch(_){}
+    if(!response.ok){
+      throw new Error(result.detail||result.error||'Не удалось отправить подарок');
+    }
+
+    if(typeof closeDrawer==='function') closeDrawer();
     showToast('Подарок отправлен 🎁');
 
-    // Центрированное сообщение о подарке в текущем чате.
-    if(selected && Number(selected.id)===Number(recipientId)){
-      const catalogGift=(window.__giftCatalog||[]).find(g=>Number(g.id)===Number(giftId));
-      const emoji=result?.gift?.emoji || catalogGift?.emoji || '🎁';
-      const price=Number(result?.gift?.price_stars ?? catalogGift?.price_stars ?? 0);
+    const catalogGift=(window.__giftCatalog||[]).find(g=>Number(g.id)===Number(giftId));
+    const emoji=result?.gift?.emoji || catalogGift?.emoji || '🎁';
+    const price=Number(result?.gift?.price_stars ?? catalogGift?.price_stars ?? 0);
 
+    if(selected && Number(selected.id)===Number(recipientId)){
       const messages=$('messages') || $('chatMessages');
       if(messages){
         const wrap=document.createElement('div');
@@ -2559,7 +2569,9 @@ async function sendGift(recipientId,giftId,giftName,recipientUsername){
         requestAnimationFrame(()=>{messages.scrollTop=messages.scrollHeight});
       }
     }
-  }catch(e){showToast(e.message)}
+  }catch(e){
+    showToast(e.message||'Не удалось отправить подарок');
+  }
 }
 
 async function openRayfStar(){
