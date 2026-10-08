@@ -278,8 +278,22 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
         await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
+        # Старые версии могли оставить конфликтующие username. Сначала снимаем индекс,
+        # затем безопасно нормализуем дубликаты и только после этого возвращаем UNIQUE.
+        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_groups_username")
         await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
+        await conn.exec_driver_sql("""
+            WITH dup AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY username ORDER BY id) AS rn
+                FROM groups
+                WHERE username IS NOT NULL AND username <> ''
+            )
+            UPDATE groups g
+            SET username = 'group_' || g.id || '_' || g.id
+            FROM dup d
+            WHERE g.id = d.id AND d.rn > 1
+        """)
+        await conn.exec_driver_sql("CREATE UNIQUE INDEX uq_groups_username ON groups(username)")
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -330,6 +344,9 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_created_at ON nft_market_listings(created_at)")
         # Безопасно восстанавливаем уникальность серийных номеров перед созданием индекса.
         # В старых версиях базы могли остаться одинаковые serial у одного типа подарка.
+        # Удаляем старый индекс заранее: это позволяет исправить уже существующие дубликаты
+        # внутри одной транзакции, не получая IntegrityError на UPDATE.
+        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_user_gift_serial")
         await conn.exec_driver_sql("""
             WITH ranked AS (
                 SELECT id, ROW_NUMBER() OVER (PARTITION BY gift_id ORDER BY id) AS rn
@@ -364,7 +381,7 @@ async def init_db():
                 END IF;
             END $$;
         """)
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
+        await conn.exec_driver_sql("CREATE UNIQUE INDEX uq_user_gift_serial ON user_gifts(gift_id, serial)")
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
