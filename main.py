@@ -278,22 +278,60 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
         await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
-        # Старые версии могли оставить конфликтующие username. Сначала снимаем индекс,
-        # затем безопасно нормализуем дубликаты и только после этого возвращаем UNIQUE.
-        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_groups_username")
-        await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
+        # Старые версии могли оставить UNIQUE-ограничение/индекс на groups.username.
+        # Сначала убираем уникальность именно с username, исправляем дубликаты,
+        # затем возвращаем один понятный UNIQUE INDEX.
         await conn.exec_driver_sql("""
-            WITH dup AS (
-                SELECT id, ROW_NUMBER() OVER (PARTITION BY username ORDER BY id) AS rn
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.groups') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_attribute a ON a.attrelid = c.conrelid
+                                           AND a.attnum = ANY(c.conkey)
+                        WHERE c.conrelid = 'public.groups'::regclass
+                          AND c.contype = 'u'
+                          AND a.attname = 'username'
+                    LOOP
+                        EXECUTE format('ALTER TABLE public.groups DROP CONSTRAINT IF EXISTS %I', r.conname);
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_groups_username")
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.groups') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'groups'
+                          AND indexdef ILIKE 'CREATE UNIQUE INDEX% (username)'
+                    LOOP
+                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
+        # Только повторяющиеся usernames переименовываем во временные уникальные значения.
+        await conn.exec_driver_sql("""
+            WITH ranked AS (
+                SELECT id, username, ROW_NUMBER() OVER (PARTITION BY username ORDER BY id) AS rn
                 FROM groups
                 WHERE username IS NOT NULL AND username <> ''
             )
             UPDATE groups g
-            SET username = 'group_' || g.id || '_' || g.id
-            FROM dup d
-            WHERE g.id = d.id AND d.rn > 1
+            SET username = 'group_migrated_' || g.id
+            FROM ranked r
+            WHERE g.id = r.id AND r.rn > 1
         """)
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX uq_groups_username ON groups(username)")
+        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -342,6 +380,13 @@ async def init_db():
         """)
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_seller_id ON nft_market_listings(seller_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_created_at ON nft_market_listings(created_at)")
+        # Перед уникальностью листинга оставляем по одному листингу на NFT.
+        await conn.exec_driver_sql("""
+            DELETE FROM nft_market_listings a
+            USING nft_market_listings b
+            WHERE a.user_gift_id = b.user_gift_id
+              AND a.id > b.id
+        """)
         # Безопасно восстанавливаем уникальность серийных номеров перед созданием индекса.
         # В старых версиях базы могли остаться одинаковые serial у одного типа подарка.
         # Удаляем старый индекс заранее: это позволяет исправить уже существующие дубликаты
