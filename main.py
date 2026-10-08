@@ -1832,10 +1832,10 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .story-camera-wrap{display:flex;justify-content:center;align-items:center;padding:8px 10px 4px}
 .story-camera-btn{width:52px;height:52px;border-radius:18px;border:1px solid #2d3940;background:#151b1f;color:#fff;font-size:24px;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .16s ease,box-shadow .16s ease}
 .story-camera-btn:active{transform:scale(.92)}
-.story-ring{width:58px;height:58px;flex:0 0 58px;border-radius:50%;padding:3px;background:linear-gradient(135deg,#19d3c5,#1577ff,#20e3b2);box-shadow:0 0 14px rgba(26,206,205,.24);display:flex;align-items:center;justify-content:center;cursor:pointer}
-.story-ring>.avatar{width:52px;height:52px;box-shadow:0 0 0 2px #101010}
+.story-ring{width:58px;height:58px;flex:0 0 58px;border-radius:50%;padding:2px;background:linear-gradient(135deg,#36d8ff 0%,#2878ff 48%,#6fe7d8 100%);box-shadow:0 0 8px rgba(48,177,255,.18);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.story-ring>.avatar{width:54px;height:54px;box-shadow:0 0 0 1px #101010}
 .story-profile-ring{width:140px;height:140px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
-.story-profile-ring.has-story{padding:4px;background:linear-gradient(135deg,#19d3c5,#1577ff,#20e3b2);box-shadow:0 0 22px rgba(26,206,205,.28)}
+.story-profile-ring.has-story{padding:2px;background:linear-gradient(135deg,#36d8ff 0%,#2878ff 48%,#6fe7d8 100%);box-shadow:0 0 12px rgba(48,177,255,.20)}
 .story-profile-ring .profile-avatar{margin:0!important}
 .story-viewer{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 .story-viewer-top{width:100%;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:14px}
