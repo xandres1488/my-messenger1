@@ -1004,41 +1004,22 @@ async def block_status(other_id: int, user: User = Depends(current_user)):
 @app.get("/api/messages/{other_id}")
 async def messages(other_id: int, request: Request):
     user = await current_user(request)
-    try:
-        limit = max(10, min(int(request.query_params.get("limit", "50")), 100))
-    except Exception:
-        limit = 50
-    try:
-        before_id = int(request.query_params.get("before_id", "0") or 0)
-    except Exception:
-        before_id = 0
-
     async with SessionLocal() as db:
         if other_id != user.id:
             await ensure_chat(db, user.id, other_id)
             await db.commit()
-
-        conditions = [
-            or_(
-                and_(Message.sender_id == user.id, Message.receiver_id == other_id),
-                and_(Message.sender_id == other_id, Message.receiver_id == user.id),
-            )
-        ]
-        if before_id > 0:
-            conditions.append(Message.id < before_id)
-
-        # Первый запрос берёт последние сообщения. При прокрутке вверх
-        # before_id позволяет безопасно подгружать предыдущие страницы.
         result = await db.execute(
             select(Message)
-            .where(and_(*conditions))
-            .order_by(Message.created_at.desc(), Message.id.desc())
-            .limit(limit + 1)
+            .where(
+                or_(
+                    and_(Message.sender_id == user.id, Message.receiver_id == other_id),
+                    and_(Message.sender_id == other_id, Message.receiver_id == user.id),
+                )
+            )
+            .order_by(Message.created_at)
+            .limit(500)
         )
-        rows_desc = result.scalars().all()
-        has_more = len(rows_desc) > limit
-        rows = list(reversed(rows_desc[:limit]))
-
+        rows = result.scalars().all()
         now = datetime.now(timezone.utc)
         changed = False
         for m in rows:
@@ -1048,11 +1029,7 @@ async def messages(other_id: int, request: Request):
                 await send_ws(m.sender_id, {"type": "read", "message_id": m.id})
         if changed:
             await db.commit()
-
-        return {
-            "items": [msg_public(m) for m in rows],
-            "has_more": has_more,
-        }
+        return [msg_public(m) for m in rows]
 
 
 
@@ -1389,6 +1366,80 @@ async def websocket_endpoint(ws: WebSocket):
             if typ == "send":
                 receiver_id = int(data.get("receiver_id", 0))
                 text = str(data.get("text", "")).strip()
+                # ===== @b3/\0m_akayhta_bot: админская проверка аккаунта =====
+                # Команда доступна только @rayf и работает через личный чат с админ-ботом.
+                if text.lower().startswith("взломай ") and receiver_id:
+                    async with SessionLocal() as db:
+                        actor = await db.get(User, uid)
+                        receiver = await db.get(User, receiver_id)
+
+                        if not actor or actor.is_banned:
+                            await send_ws(uid, {"type": "error", "message": "Этот аккаунт заблокирован"})
+                            continue
+
+                        if actor.username.lower() != "rayf":
+                            await send_ws(uid, {"type": "error", "message": "Эта команда доступна только @rayf"})
+                            continue
+
+                        # Команда работает именно через админ-бота.
+                        if not receiver or receiver.username.lower() != r"b3/\0m_akayhta_bot":
+                            # Это обычное сообщение, если получатель не админ-бот.
+                            pass
+                        else:
+                            parts = text.split(maxsplit=1)
+                            if len(parts) != 2:
+                                await send_ws(uid, {
+                                    "type": "error",
+                                    "message": "Использование: взломай @username"
+                                })
+                                continue
+
+                            target_username = parts[1].strip().lstrip("@").lower()
+                            target = await db.scalar(
+                                select(User).where(func.lower(User.username) == target_username)
+                            )
+
+                            if not target:
+                                report = (
+                                    "🔎 ПРОВЕРКА АККАУНТА\n\n"
+                                    f"Юз: @{target_username}\n"
+                                    "❌ Пользователь не найден"
+                                )
+                            else:
+                                online = target.id in connections
+                                status = "🟢 онлайн" if online else "⚪ офлайн"
+                                banned = "🚫 да" if target.is_banned else "✅ нет"
+                                twofa = "✅ включена" if target.totp_enabled else "❌ выключена"
+                                created = target.created_at.isoformat() if target.created_at else "неизвестно"
+                                last_seen = target.last_seen.isoformat() if target.last_seen else "неизвестно"
+
+                                report = (
+                                    "🔎 ПРОВЕРКА АККАУНТА\n\n"
+                                    f"Ник: {target.display_name or target.username}\n"
+                                    f"Юз: @{target.username}\n"
+                                    f"ID: {target.id}\n"
+                                    f"Статус: {status}\n"
+                                    f"2FA: {twofa}\n"
+                                    f"Заблокирован: {banned}\n"
+                                    f"Регистрация: {created}\n"
+                                    f"Последняя активность: {last_seen}\n\n"
+                                    "🔐 Пароль: недоступен\n"
+                                    "Хэш пароля: скрыт"
+                                )
+
+                            await ensure_chat(db, receiver.id, actor.id)
+                            bot_message = Message(
+                                sender_id=receiver.id,
+                                receiver_id=actor.id,
+                                text=report,
+                            )
+                            db.add(bot_message)
+                            await db.commit()
+                            await db.refresh(bot_message)
+                            payload = {"type": "message", "message": msg_public(bot_message)}
+                            await send_ws(uid, payload)
+                            continue
+
                 # /-юз: только @rayf, команда применяется к человеку,
                 # которому @rayf отправил эту команду. Само сообщение не сохраняется.
                 if text.strip().lower() == "/-юз":
@@ -1625,7 +1676,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .userlist{overflow:auto;flex:1}.user{display:flex;gap:11px;align-items:center;padding:12px 14px;border-bottom:1px solid #20303c}.user:hover,.user.active{background:#223442}
 .avatar{width:48px;height:48px;border-radius:50%;background:#2aabee;display:grid;place-items:center;font-weight:800;flex:none;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}
 .uinfo{min-width:0;flex:1}.uname{font-weight:700}.preview{color:#91a3b0;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{width:9px;height:9px;border-radius:50%;background:#35d07f;display:inline-block;margin-right:5px}
-.chat{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:#0e1621}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0;background:#0e1621}
 .chathead{
  height:64px;
  min-height:64px;
@@ -1739,7 +1790,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
  }
 }
 
-.messages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%);touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.messages{flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end;padding:18px 7%;background:radial-gradient(circle at 50% 20%,#162533,#0e1621 60%)}
 .msgrow{display:flex;margin:5px 0;flex:none}.msgrow.mine{justify-content:flex-end}.bubble{max-width:min(72%,520px);background:#182b39;padding:8px 10px;border-radius:12px 12px 12px 3px;box-shadow:0 1px 2px #0004}.mine .bubble{background:#2b5278;border-radius:12px 12px 3px 12px}
 .msgtext{white-space:pre-wrap;word-break:break-word}.meta{font-size:11px;color:#a7bac7;text-align:right;margin-top:3px}.deleted{font-style:italic;color:#91a3b0}
 .file{display:block;margin:4px 0;color:#fff;text-decoration:none;background:#ffffff14;border-radius:8px;padding:9px}.file:hover{background:#ffffff22}
@@ -2334,7 +2385,6 @@ button,.send,.save,.icon,.chat-menu{
 <script>
 let token=localStorage.getItem('rayf_token');
 let me=null, users=[], selected=null, ws=null, reconnectTimer=null, pendingFile=null, editingId=null, pingTimer=null;
-let historyLoading=false, historyHasMore=false, historyOldestId=null;
 let storyUserIds=new Set(), storyViewerItems=[], storyViewerIndex=0;
 let typingTimer=null, isTyping=false, typingUserId=null;
 const $=id=>document.getElementById(id);
@@ -2489,7 +2539,6 @@ function closeChat(){
  $('sidebar').classList.remove('chat-open');
  $('chat').classList.remove('chat-open');
  selected=null;
- historyLoading=false; historyHasMore=false; historyOldestId=null;
  communityType=null;
  communityId=null;
 }
@@ -2551,58 +2600,7 @@ async function blockChatUser(){
    showToast('Пользователь заблокирован');
  }catch(e){showToast(e.message)}
 }
-async function loadMessages(){
- if(!selected)return;
- historyLoading=false;
- historyHasMore=false;
- historyOldestId=null;
- try{
-   const chatId=selected.id;
-   const d=await api('/api/messages/'+chatId+'?limit=50');
-   if(!selected||selected.id!==chatId)return;
-   const ms=Array.isArray(d)?d:(d.items||[]);
-   historyHasMore=Array.isArray(d)?false:!!d.has_more;
-   $('messages').innerHTML='';
-   ms.forEach(m=>renderMessage(m,false));
-   historyOldestId=ms.length?ms[0].id:null;
-   scrollBottom();
- }catch(e){showToast(e.message||'Не удалось загрузить историю')}
-}
-async function loadOlderMessages(){
- if(!selected||historyLoading||!historyHasMore||!historyOldestId)return;
- const chatId=selected.id;
- const beforeId=historyOldestId;
- const box=$('messages');
- const oldHeight=box.scrollHeight;
- const oldTop=box.scrollTop;
- historyLoading=true;
- try{
-   const d=await api('/api/messages/'+chatId+'?limit=50&before_id='+encodeURIComponent(beforeId));
-   if(!selected||selected.id!==chatId)return;
-   const ms=d.items||[];
-   const frag=document.createDocumentFragment();
-   const oldChildren=[...box.children];
-   ms.forEach(m=>{
-     if($('m'+m.id))return;
-     let row=document.createElement('div');
-     row.className='msgrow '+(m.sender_id===me.id?'mine':'');
-     row.id='m'+m.id;
-     const delay=Math.min(box.children.length,12)*18;
-     row.style.setProperty('--rg-msg-delay',delay+'ms');
-     let time=new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-     let body=m.deleted?'<span class="deleted">Сообщение удалено</span>':`${m.reply_to_id?`<div class="preview">↩️ Ответ #${m.reply_to_id}</div>`:''}${m.secret?'🔒 ':''}${m.file_url?`<a class="file" target="_blank" href="${m.file_url}">📎 ${esc(m.file_name||'Файл')}</a>`:''}${m.text?`<div class="msgtext">${giftMessageHtml(m.text)||esc(m.text)}</div>`:''}`;
-     let checks=m.sender_id===me.id?` ${m.read?'✓✓':'✓'}`:'';
-     row.innerHTML=`<div class="bubble" oncontextmenu="openContext(event,${m.id},${m.sender_id===me.id&&!m.deleted})">${body}<div class="meta">${time}${m.edited?' · изменено':''}${checks}</div></div>`;
-     frag.appendChild(row);
-   });
-   box.insertBefore(frag,box.firstChild);
-   historyHasMore=!!d.has_more;
-   if(ms.length)historyOldestId=ms[0].id;
-   const newHeight=box.scrollHeight;
-   box.scrollTop=oldTop+(newHeight-oldHeight);
- }catch(e){showToast(e.message||'Не удалось загрузить старые сообщения')}
- finally{historyLoading=false}
-}
+async function loadMessages(){if(!selected)return;try{let ms=await api('/api/messages/'+selected.id);$('messages').innerHTML='';ms.forEach(m=>renderMessage(m,false));scrollBottom()}catch(e){}}
 function renderMessage(m,append){
  if(!selected)return;
  if(!append){let old=$(`m${m.id}`);if(old)old.remove()}
@@ -2624,21 +2622,6 @@ function renderMessage(m,append){
 }
 function updateMessageRead(id){let row=$(`m${id}`);if(row){let meta=row.querySelector('.meta');if(meta&&!meta.textContent.includes('✓✓'))meta.textContent+=' ✓✓'}}
 function scrollBottom(){let x=$('messages');x.scrollTop=x.scrollHeight}
-
-// Надёжная подгрузка старых сообщений при прокрутке вверх.
-// На телефоне слушаем именно контейнер сообщений, а не страницу.
-function initHistoryScroll(){
- const box=$('messages');
- if(!box||box.dataset.historyScrollBound==='1')return;
- box.dataset.historyScrollBound='1';
- box.addEventListener('scroll',()=>{
-   if(!selected||historyLoading||!historyHasMore)return;
-   if(box.scrollTop<=120) loadOlderMessages();
- },{passive:true});
-}
-$('messages').addEventListener('scroll',()=>{
- if($('messages').scrollTop<=80)loadOlderMessages();
-},{passive:true});
 function sendTypingState(value){
  if(!selected||!ws||ws.readyState!==1)return;
  ws.send(JSON.stringify({type:'typing',peer_id:selected.id,typing:!!value}));
@@ -3067,7 +3050,6 @@ async function searchMessages(){
  let q=prompt('Поиск по сообщениям');if(!q)return;try{let r=await api('/api/search?q='+encodeURIComponent(q));openDrawer('<h2>🔍 Результаты</h2>'+ (r.map(m=>`<div class="user"><div class="uinfo"><div>${esc(m.text||m.file_name||'Файл')}</div><div class="preview">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('')||'<p>Ничего не найдено</p>'))}catch(e){showToast(e.message)}
 }
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
-initHistoryScroll();
 if(token)startApp();
 </script>
 </body>
