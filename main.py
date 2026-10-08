@@ -8,12 +8,13 @@ import hashlib
 import struct
 import time
 import urllib.parse
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func, delete
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -228,7 +229,7 @@ class UserGift(Base):
 class NftMarketListing(Base):
     __tablename__ = "nft_market_listings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_gift_id: Mapped[int] = mapped_column(ForeignKey("user_gifts.id"), unique=True, index=True)
+    user_gift_id: Mapped[int] = mapped_column(ForeignKey("user_gifts.id"), index=True)
     seller_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     price_stars: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
@@ -244,112 +245,6 @@ class Reaction(Base):
 
 async def init_db():
     async with engine.begin() as conn:
-        # КРИТИЧЕСКИ ВАЖНО:
-        # старые версии RayfGram могли оставить UNIQUE-ограничения в PostgreSQL.
-        # create_all() проверяет существование таблиц, но не чинит уже существующие
-        # ограничения. Поэтому сначала безопасно снимаем только те ограничения,
-        # которые RayfGram потом восстанавливает после очистки данных.
-        #
-        # Если таблицы ещё нет (новая база), команды ничего не делают.
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.groups') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT c.conname
-                        FROM pg_constraint c
-                        JOIN pg_attribute a ON a.attrelid = c.conrelid
-                                           AND a.attnum = ANY(c.conkey)
-                        WHERE c.conrelid = 'public.groups'::regclass
-                          AND c.contype = 'u'
-                          AND a.attname = 'username'
-                    LOOP
-                        EXECUTE format(
-                            'ALTER TABLE public.groups DROP CONSTRAINT IF EXISTS %I',
-                            r.conname
-                        );
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.groups') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT indexname
-                        FROM pg_indexes
-                        WHERE schemaname = 'public'
-                          AND tablename = 'groups'
-                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%username%'
-                    LOOP
-                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.user_gifts') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT indexname
-                        FROM pg_indexes
-                        WHERE schemaname = 'public'
-                          AND tablename = 'user_gifts'
-                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
-                          AND indexdef ILIKE '%gift_id%'
-                          AND indexdef ILIKE '%serial%'
-                    LOOP
-                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.nft_market_listings') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT c.conname
-                        FROM pg_constraint c
-                        JOIN pg_attribute a ON a.attrelid = c.conrelid
-                                           AND a.attnum = ANY(c.conkey)
-                        WHERE c.conrelid = 'public.nft_market_listings'::regclass
-                          AND c.contype = 'u'
-                          AND a.attname = 'user_gift_id'
-                    LOOP
-                        EXECUTE format(
-                            'ALTER TABLE public.nft_market_listings DROP CONSTRAINT IF EXISTS %I',
-                            r.conname
-                        );
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.nft_market_listings') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT indexname
-                        FROM pg_indexes
-                        WHERE schemaname = 'public'
-                          AND tablename = 'nft_market_listings'
-                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
-                          AND indexdef ILIKE '%user_gift_id%'
-                    LOOP
-                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-
         await conn.run_sync(Base.metadata.create_all)
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS secondary_username VARCHAR(32)")
         # Мягкая миграция существующей базы: старые аккаунты и сообщения сохраняются.
@@ -384,69 +279,7 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE messages SET pinned = FALSE WHERE pinned IS NULL")
         await conn.exec_driver_sql("UPDATE messages SET secret = FALSE WHERE secret IS NULL")
         await conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN IF NOT EXISTS username VARCHAR(32)")
-        # Старые версии могли оставить UNIQUE-ограничение/индекс на groups.username.
-        # Сначала убираем уникальность именно с username, исправляем дубликаты,
-        # затем возвращаем один понятный UNIQUE INDEX.
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.groups') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT c.conname
-                        FROM pg_constraint c
-                        JOIN pg_attribute a ON a.attrelid = c.conrelid
-                                           AND a.attnum = ANY(c.conkey)
-                        WHERE c.conrelid = 'public.groups'::regclass
-                          AND c.contype = 'u'
-                          AND a.attname = 'username'
-                    LOOP
-                        EXECUTE format('ALTER TABLE public.groups DROP CONSTRAINT IF EXISTS %I', r.conname);
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_groups_username")
-        await conn.exec_driver_sql("""
-            DO $$
-            DECLARE r RECORD;
-            BEGIN
-                IF to_regclass('public.groups') IS NOT NULL THEN
-                    FOR r IN
-                        SELECT indexname
-                        FROM pg_indexes
-                        WHERE schemaname = 'public'
-                          AND tablename = 'groups'
-                          AND indexdef ILIKE 'CREATE UNIQUE INDEX% (username)'
-                    LOOP
-                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
-                    END LOOP;
-                END IF;
-            END $$;
-        """)
         await conn.exec_driver_sql("UPDATE groups SET username = 'group_' || id WHERE username IS NULL OR username = ''")
-        # Только повторяющиеся usernames переименовываем во временные уникальные значения.
-        await conn.exec_driver_sql("""
-            WITH ranked AS (
-                SELECT id, username, ROW_NUMBER() OVER (PARTITION BY username ORDER BY id) AS rn
-                FROM groups
-                WHERE username IS NOT NULL AND username <> ''
-            )
-            UPDATE groups g
-            SET username = 'group_migrated_' || g.id
-            FROM ranked r
-            WHERE g.id = r.id AND r.rn > 1
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            BEGIN
-                BEGIN
-                    CREATE UNIQUE INDEX uq_groups_username ON groups(username);
-                EXCEPTION WHEN duplicate_table OR unique_violation THEN
-                    NULL;
-                END;
-            END $$;
-        """)
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -470,16 +303,14 @@ async def init_db():
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
         await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS is_collectible BOOLEAN DEFAULT FALSE")
         await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS model_code VARCHAR(40) DEFAULT 'default'")
-        await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS base_backdrop VARCHAR(40) DEFAULT 'Obsidian'")
-        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMPTZ DEFAULT NOW()")
+        await conn.exec_driver_sql("ALTER TABLE gift_catalog ADD COLUMN IF NOT EXISTS base_backdrop VARCHAR(40) DEFAULT 'Без фона'")
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS upgrade_level INTEGER DEFAULT 0")
-        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS backdrop VARCHAR(40) DEFAULT 'Obsidian'")
+        await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS backdrop VARCHAR(40) DEFAULT 'Без фона'")
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS pattern VARCHAR(40) DEFAULT '—'")
         await conn.exec_driver_sql("ALTER TABLE user_gifts ADD COLUMN IF NOT EXISTS model_variant VARCHAR(64) DEFAULT 'base'")
         await conn.exec_driver_sql("UPDATE gift_catalog SET is_collectible = FALSE WHERE is_collectible IS NULL")
         await conn.exec_driver_sql("UPDATE gift_catalog SET model_code = 'default' WHERE model_code IS NULL OR model_code = ''")
-        await conn.exec_driver_sql("UPDATE gift_catalog SET base_backdrop = 'Obsidian' WHERE base_backdrop IS NULL OR base_backdrop = ''")
-        await conn.exec_driver_sql("UPDATE user_gifts SET acquired_at = NOW() WHERE acquired_at IS NULL")
+        await conn.exec_driver_sql("UPDATE gift_catalog SET base_backdrop = 'Без фона' WHERE base_backdrop IS NULL OR base_backdrop = ''")
         await conn.exec_driver_sql("UPDATE user_gifts SET upgrade_level = 0 WHERE upgrade_level IS NULL")
         await conn.exec_driver_sql("UPDATE user_gifts SET backdrop = 'Без фона' WHERE backdrop IS NULL OR backdrop = ''")
         await conn.exec_driver_sql("UPDATE user_gifts SET pattern = '—' WHERE pattern IS NULL OR pattern = ''")
@@ -487,7 +318,7 @@ async def init_db():
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS nft_market_listings (
                 id SERIAL PRIMARY KEY,
-                user_gift_id INTEGER UNIQUE NOT NULL REFERENCES user_gifts(id) ON DELETE CASCADE,
+                user_gift_id INTEGER NOT NULL REFERENCES user_gifts(id) ON DELETE CASCADE,
                 seller_id INTEGER NOT NULL REFERENCES users(id),
                 price_stars INTEGER NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
@@ -495,62 +326,6 @@ async def init_db():
         """)
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_seller_id ON nft_market_listings(seller_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_nft_market_listings_created_at ON nft_market_listings(created_at)")
-        # Перед уникальностью листинга оставляем по одному листингу на NFT.
-        await conn.exec_driver_sql("""
-            DELETE FROM nft_market_listings a
-            USING nft_market_listings b
-            WHERE a.user_gift_id = b.user_gift_id
-              AND a.id > b.id
-        """)
-        # Безопасно восстанавливаем уникальность серийных номеров перед созданием индекса.
-        # В старых версиях базы могли остаться одинаковые serial у одного типа подарка.
-        # Удаляем старый индекс заранее: это позволяет исправить уже существующие дубликаты
-        # внутри одной транзакции, не получая IntegrityError на UPDATE.
-        await conn.exec_driver_sql("DROP INDEX IF EXISTS uq_user_gift_serial")
-        await conn.exec_driver_sql("""
-            WITH ranked AS (
-                SELECT id, ROW_NUMBER() OVER (PARTITION BY gift_id ORDER BY id) AS rn
-                FROM user_gifts
-            )
-            UPDATE user_gifts ug
-            SET serial = ranked.rn
-            FROM ranked
-            WHERE ug.id = ranked.id
-              AND ug.serial IS NULL
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1
-                    FROM (
-                        SELECT gift_id, serial, COUNT(*) AS c
-                        FROM user_gifts
-                        GROUP BY gift_id, serial
-                        HAVING COUNT(*) > 1
-                    ) d
-                ) THEN
-                    WITH ranked AS (
-                        SELECT id, ROW_NUMBER() OVER (PARTITION BY gift_id ORDER BY id) AS rn
-                        FROM user_gifts
-                    )
-                    UPDATE user_gifts ug
-                    SET serial = ranked.rn
-                    FROM ranked
-                    WHERE ug.id = ranked.id;
-                END IF;
-            END $$;
-        """)
-        await conn.exec_driver_sql("""
-            DO $$
-            BEGIN
-                BEGIN
-                    CREATE UNIQUE INDEX uq_user_gift_serial ON user_gifts(gift_id, serial);
-                EXCEPTION WHEN duplicate_table OR unique_violation THEN
-                    NULL;
-                END;
-            END $$;
-        """)
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
@@ -572,26 +347,7 @@ async def init_db():
             ])
             await seed_db.commit()
 
-        # Полностью заменяем старые NFT-модели на новую коллекцию v2.
-        old_collectible_codes = [
-            "nft_pepe", "nft_midas_pepe", "nft_diamond_pepe", "nft_lucky_cat",
-            "nft_cyber_panda", "nft_neon_fox", "nft_rayfbot", "nft_alien_rayf",
-            "nft_mystic_eye", "nft_rayf_crown", "nft_dark_skull", "nft_rayf_dragon",
-            "nft_mini_pepe", "nft_tiny_lucky_cat", "nft_mini_alien", "nft_pocket_rayfbot",
-            "nft_mini_neon_fox", "nft_little_rayf_crown"
-        ]
-        old_rows = (await seed_db.execute(select(GiftCatalog).where(GiftCatalog.code.in_(old_collectible_codes)))).scalars().all()
-        for old_gift in old_rows:
-            owned = (await seed_db.execute(select(UserGift).where(UserGift.gift_id == old_gift.id))).scalars().all()
-            for old_ug in owned:
-                await seed_db.execute(delete(NftMarketListing).where(NftMarketListing.user_gift_id == old_ug.id))
-                await seed_db.delete(old_ug)
-            await seed_db.delete(old_gift)
-        if old_rows:
-            await seed_db.commit()
-
         collectible_defs_v2 = [
-            # code, name, emoji, rarity, price, model_code, description
             ("nft_pepe_v2", "Pepe", "🐸", "Редкий", 2000, "pepe", "Базовый Pepe. Одно улучшение за 125⭐️."),
             ("nft_digital_pet_v2", "Цифровой питомец", "📟", "Редкий", 500, "digital_pet", "Коллекционная модель цифрового питомца."),
             ("nft_bells_v2", "Колокольчики", "🔔", "Обычный", 250, "bells", "Коллекционная пара колокольчиков."),
@@ -617,16 +373,9 @@ async def init_db():
             if not exists:
                 seed_db.add(GiftCatalog(code=code, name=name, emoji=emoji, rarity=rarity, collection="RayfGram Collectibles", price_stars=price, description=desc, is_collectible=True, model_code=model_code, base_backdrop="Без фона"))
             else:
-                # Синхронизируем каталог с актуальными ценами/моделями даже если запись уже была в PostgreSQL.
-                exists.name = name
-                exists.emoji = emoji
-                exists.rarity = rarity
-                exists.price_stars = price
-                exists.description = desc
-                exists.is_collectible = True
-                exists.model_code = model_code
-                exists.base_backdrop = "Без фона"
+                exists.name=name; exists.emoji=emoji; exists.rarity=rarity; exists.price_stars=price; exists.description=desc; exists.is_collectible=True; exists.model_code=model_code; exists.base_backdrop="Без фона"
         await seed_db.commit()
+
 
 
 @app.on_event("startup")
@@ -634,13 +383,7 @@ async def startup():
     try:
         await init_db()
     except Exception as exc:
-        # Не скрываем настоящую причину в Render Logs.
-        # Это особенно важно для asyncpg/SQLAlchemy, где верхняя строка
-        # может показывать только ссылку gkpj.
-        print("RAYFGRAM STARTUP ERROR:", repr(exc), flush=True)
-        orig = getattr(exc, "orig", None)
-        if orig is not None:
-            print("RAYFGRAM DB ORIGINAL ERROR:", repr(orig), flush=True)
+        print("RAYFGRAM STARTUP DATABASE ERROR:", repr(exc), flush=True)
         raise
 
 
@@ -1001,6 +744,8 @@ async def nft_transfer(user_gift_id: int = Form(...), username: str = Form(...),
         gift = await db.get(GiftCatalog, ug.gift_id)
         if not gift or not gift.is_collectible:
             raise HTTPException(400, "Это не коллекционный NFT")
+        if int(ug.upgrade_level or 0) <= 0:
+            raise HTTPException(400, "Напрямую можно передать только улучшенный NFT")
         listed = await db.scalar(select(NftMarketListing).where(NftMarketListing.user_gift_id == ug.id).limit(1))
         if listed:
             raise HTTPException(400, "Сначала снимите NFT с рынка")
@@ -1154,7 +899,7 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
             upgrade_level=0,
             backdrop="Без фона" if gift.is_collectible else "Obsidian",
             pattern="—" if gift.is_collectible else "Classic",
-            model_variant="base" if gift.is_collectible else "base",
+            model_variant="base",
         )
         db.add(ug)
 
@@ -2299,8 +2044,6 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-usernames-info{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
-.nft-bg-none{background:transparent}.nft-bg-green{background:linear-gradient(145deg,#35a852,#278d45 48%,#1f7d3b)}.nft-bg-yellow{background:linear-gradient(145deg,#f8d85a,#e8be37 48%,#d8a925)}.nft-bg-blue{background:linear-gradient(145deg,#63b7ef,#4d9fdd 48%,#3d8cc7)}.nft-bg-purple{background:linear-gradient(145deg,#9564dc,#814fcb 48%,#6d43b4)}.nft-bg-beige{background:linear-gradient(145deg,#e6cfaa,#d9bf94 48%,#c9ad7e)}.nft-bg-black{background:linear-gradient(145deg,#25282d,#1f2226 48%,#17191c)}.nft-bg-pink{background:linear-gradient(145deg,#ee82bb,#df69aa 48%,#cb5798)}.nft-bg-red{background:linear-gradient(145deg,#e95d62,#d94b51 48%,#bd3940)}.nft-bg-gold{background:linear-gradient(145deg,#e6c95e,#d6b442 48%,#bf9b2e)}.nft-bg-gray{background:linear-gradient(145deg,#8f979e,#7f878e 48%,#6e767d)}.nft-bg-brown{background:linear-gradient(145deg,#8c5d3a,#774b2e 48%,#653d24)}
-.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::before{content:"";position:absolute;inset:0;background-image:var(--nft-pattern);background-size:58px 58px;background-position:center;opacity:.20;z-index:0}.nft-art::after{content:"";position:absolute;inset:-30%;background:linear-gradient(120deg,transparent 35%,rgba(255,255,255,.10) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 4.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:68%;height:68%;filter:drop-shadow(0 12px 18px rgba(0,0,0,.40));animation:nftModel 3.2s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-glass{position:absolute;inset:8%;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.07),transparent 45%,rgba(0,0,0,.08));z-index:2;pointer-events:none}.nft-sparkle{position:absolute;right:12%;top:10%;z-index:4;color:rgba(255,255,255,.55);font-size:12px;animation:nftSparkle 2.2s ease-in-out infinite;pointer-events:none}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftSparkle{0%,100%{opacity:.30;transform:scale(.9)}50%{opacity:.8;transform:scale(1.08)}}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.025)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
 .gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
 .gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
@@ -2778,6 +2521,9 @@ button,.send,.save,.icon,.chat-menu{
 .star-tx-main{min-width:0}.star-tx-title{font-size:15px;font-weight:600}.star-tx-sub{font-size:12px;color:#858585;margin-top:3px}
 .star-tx-amount{font-size:14px;font-weight:700;white-space:nowrap}.star-tx-amount.plus{color:#72d88b}.star-tx-amount.minus{color:#ff7474}
 .star-tx-empty{color:#858585;font-size:13px;padding:12px 2px 14px}
+.nft-bg-none{background:transparent}.nft-bg-green{background:linear-gradient(145deg,#35a852,#278d45 48%,#1f7d3b)}.nft-bg-yellow{background:linear-gradient(145deg,#f8d85a,#e8be37 48%,#d8a925)}.nft-bg-blue{background:linear-gradient(145deg,#63b7ef,#4d9fdd 48%,#3d8cc7)}.nft-bg-purple{background:linear-gradient(145deg,#9564dc,#814fcb 48%,#6d43b4)}.nft-bg-beige{background:linear-gradient(145deg,#e6cfaa,#d9bf94 48%,#c9ad7e)}.nft-bg-black{background:linear-gradient(145deg,#25282d,#1f2226 48%,#17191c)}.nft-bg-pink{background:linear-gradient(145deg,#ee82bb,#df69aa 48%,#cb5798)}.nft-bg-red{background:linear-gradient(145deg,#e95d62,#d94b51 48%,#bd3940)}.nft-bg-gold{background:linear-gradient(145deg,#e6c95e,#d6b442 48%,#bf9b2e)}.nft-bg-gray{background:linear-gradient(145deg,#8f979e,#7f878e 48%,#6e767d)}.nft-bg-brown{background:linear-gradient(145deg,#8c5d3a,#774b2e 48%,#653d24)}
+.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::before{content:"";position:absolute;inset:0;background-image:var(--nft-pattern);background-size:58px 58px;background-position:center;opacity:.20;z-index:0}.nft-art::after{content:"";position:absolute;inset:-30%;background:linear-gradient(120deg,transparent 35%,rgba(255,255,255,.10) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 4.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:68%;height:68%;filter:drop-shadow(0 12px 18px rgba(0,0,0,.40));animation:nftModel 3.2s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-glass{position:absolute;inset:8%;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.07),transparent 45%,rgba(0,0,0,.08));z-index:2;pointer-events:none}.nft-sparkle{position:absolute;right:12%;top:10%;z-index:4;color:rgba(255,255,255,.55);font-size:12px;animation:nftSparkle 2.2s ease-in-out infinite;pointer-events:none}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftSparkle{0%,100%{opacity:.30;transform:scale(.9)}50%{opacity:.8;transform:scale(1.08)}}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.025)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
+
 </style>
 </head>
 <body>
