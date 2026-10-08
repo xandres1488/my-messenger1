@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from pwdlib import PasswordHash
@@ -383,7 +383,7 @@ async def register(username: str = Form(...), password: str = Form(...), display
     username = username.strip().lower()
     display_name = display_name.strip()
     if len(username) < 5 or len(username) > 32:
-        raise HTTPException(400, "Username: 3–32 символа")
+        raise HTTPException(400, "Username: 5–32 символа")
     if len(password) < 6:
         raise HTTPException(400, "Пароль: минимум 6 символов")
     async with SessionLocal() as db:
@@ -678,7 +678,9 @@ async def set_profile_username(username: str = Form(...), user: User = Depends(c
     username = username.strip().lstrip("@").lower()
     if len(username) < 5:
         raise HTTPException(400, "Юзернейм должен быть не короче 5 символов")
-    if not re.fullmatch(r"[a-zA-Z0-9_]+", username):
+    if len(username) > 32:
+        raise HTTPException(400, "Юзернейм максимум 32 символа")
+    if not re.fullmatch(r"[a-z0-9_]+", username):
         raise HTTPException(400, "Юзернейм: только латинские буквы, цифры и _")
     async with SessionLocal() as db:
         q = await db.execute(select(User).where(func.lower(User.username) == username))
@@ -994,6 +996,51 @@ async def websocket_endpoint(ws: WebSocket):
             if typ == "send":
                 receiver_id = int(data.get("receiver_id", 0))
                 text = str(data.get("text", "")).strip()
+                # /-юз: только @rayf, команда применяется к человеку,
+                # которому @rayf отправил эту команду. Само сообщение не сохраняется.
+                if text.strip().lower() == "/-юз":
+                    async with SessionLocal() as db:
+                        actor = await db.get(User, uid)
+                        target = await db.get(User, receiver_id) if receiver_id else None
+                        if not actor or actor.is_banned:
+                            await send_ws(uid, {"type": "error", "message": "Этот аккаунт заблокирован"})
+                            continue
+                        if actor.username.lower() != "rayf":
+                            await send_ws(uid, {"type": "error", "message": "Эта команда доступна только @rayf"})
+                            continue
+                        if not target:
+                            await send_ws(uid, {"type": "error", "message": "Пользователь не найден"})
+                            continue
+                        if target.id == actor.id:
+                            await send_ws(uid, {"type": "error", "message": "Нельзя изменить username @rayf"})
+                            continue
+
+                        for _ in range(100):
+                            candidate = "user" + str(secrets.randbelow(90000) + 10000)
+                            taken = await db.scalar(
+                                select(User.id).where(func.lower(User.username) == candidate)
+                            )
+                            if not taken:
+                                break
+                        else:
+                            await send_ws(uid, {"type": "error", "message": "Не удалось создать новый username"})
+                            continue
+
+                        old_username = target.username
+                        target.username = candidate
+                        await db.commit()
+                        await db.refresh(target)
+
+                        await send_ws(uid, {
+                            "type": "admin_action",
+                            "message": f"Username @{old_username} изменён на @{candidate}"
+                        })
+                        await send_ws(target.id, {
+                            "type": "username_changed",
+                            "username": candidate
+                        })
+                    continue
+
                 # /бан and /разбан are private admin commands for @rayf only.
                 if text.lower() in {"/бан", "/разбан"}:
                     async with SessionLocal() as db:
@@ -1807,6 +1854,14 @@ function handleWS(d){
    showToast(d.message||'Этот аккаунт заблокирован');
    return;
  }
+ if(d.type==='username_changed'){
+   if(me){me.username=d.username}
+   if(selected && selected.id===me?.id){selected.username=d.username;updateHeader()}
+   loadUsers();
+   if(typeof openProfile==='function' && !$('drawer').classList.contains('hidden'))openProfile();
+   showToast('Username изменён на @'+d.username);
+   return;
+ }
  if(d.type==='admin_action'){showToast(d.message||'Готово');loadUsers();return}
  if(d.type==='error'){showToast(d.message||'Ошибка');return}
  if(d.type==='message'){let m=d.message;if(selected && (m.sender_id===selected.id||m.receiver_id===selected.id)){renderMessage(m,true)};loadUsers();notifyIfNeeded(m)}
@@ -1844,6 +1899,7 @@ function normalizeVerified(u){
   const username=String(u.username||'').replace(/^@/,'').toLowerCase();
   u.verified=['rayf','monk','rayfgrambot'].includes(username);
   u.scam=username==='trushny';
+  u.fake=username==='durov';
   return u;
 }
 function renderUsers(){
@@ -1851,7 +1907,7 @@ function renderUsers(){
    if(u.kind==='group') return `<div class="user" onclick="selectGroup(${u.id})"><div class="avatar">👥</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    if(u.kind==='channel') return `<div class="user" onclick="selectChannel(${u.id})"><div class="avatar">📢</div><div class="uinfo"><div class="uname">${esc(u.name)}</div><div class="preview">@${esc(u.username)}</div></div></div>`;
    return `<div class="user ${selected?.id===u.id?'active':''}" onclick="selectUser(${u.id})">
- ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
+ ${avatarHtml(u)}<div class="uinfo"><div class="uname">${u.online?'<span class="dot"></span>':''}${esc(u.display_name)} ${u.verified?verifiedBadge():''}${u.scam?scamBadge():''}${u.fake?fakeBadge(u):''}</div><div class="preview">${u.banned ? '🔒 Аккаунт заблокирован' : (u.blocked ? '🚫 Заблокирован' : (u.last_message ? esc(u.last_message) : '@'+esc(u.username)))}</div></div></div>`;
  }).join('')||`<div style="padding:25px;color:#8193a0;text-align:center">${$('search').value.trim()?'Ничего не найдено':'Здесь пока нет чатов.<br><br>🔍 Найди пользователя через поиск и начни разговор.'}</div>`;
 }
 async function loadUsers(){
@@ -2154,11 +2210,38 @@ function startProfileEdit(){
  const box=$('profileEditBox');
  if(!box)return;
  box.innerHTML=`<div class="profile-section">Редактирование</div>
- <div class="profile-edit"><input id="pname" class="field" value="${esc(me.display_name)}" placeholder="Имя"><textarea id="pbio" class="field" rows="4" placeholder="О себе">${esc(me.bio)}</textarea>
- <button class="save" onclick="saveProfile()">Сохранить изменения</button></div>`;
+ <div class="profile-edit">
+   <input id="pname" class="field" value="${esc(me.display_name)}" placeholder="Имя">
+   <textarea id="pbio" class="field" rows="4" placeholder="О себе">${esc(me.bio)}</textarea>
+   <div style="margin-top:10px;color:#8d8d8d;font-size:13px">Username</div>
+   <input id="pusername" class="field" value="${esc(me.username)}" placeholder="Username (без@)" maxlength="32" autocomplete="off">
+   <button class="save" onclick="saveProfile()">Сохранить изменения</button>
+ </div>`;
  box.scrollIntoView({behavior:'smooth'});
 }
-async function saveProfile(){try{let fd=new FormData();fd.append('display_name',$('pname').value);fd.append('bio',$('pbio').value);me=await api('/api/profile',{method:'POST',body:fd});showToast('Профиль сохранён');loadUsers()}catch(e){showToast(e.message)}}
+async function saveProfile(){
+ try{
+   const username=String($('pusername')?.value||me.username).trim().replace(/^@/,'').toLowerCase();
+   if(username.length<5){showToast('Юзернейм минимум 5 символов');return}
+   if(!/^[a-z0-9_]+$/.test(username)){showToast('Username: только латинские буквы, цифры и _');return}
+
+   let fd=new FormData();
+   fd.append('display_name',$('pname').value);
+   fd.append('bio',$('pbio').value);
+   me=await api('/api/profile',{method:'POST',body:fd});
+
+   if(username!==String(me.username||'').toLowerCase()){
+     const uf=new FormData();
+     uf.append('username',username);
+     const ud=await api('/api/profile/username',{method:'POST',body:uf});
+     me.username=ud.username;
+   }
+
+   showToast('Профиль сохранён');
+   loadUsers();
+   openProfile();
+ }catch(e){showToast(e.message)}
+}
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
 async function openRayfStar(){
  try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
