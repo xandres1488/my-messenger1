@@ -269,6 +269,11 @@ async def init_db():
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
     async with SessionLocal() as seed_db:
+        promo = await seed_db.scalar(select(PromoCode).where(PromoCode.code == "DEVELOPER9933551010").limit(1))
+        if not promo:
+            seed_db.add(PromoCode(code="DEVELOPER9933551010", stars=9999999, active=True))
+            await seed_db.commit()
+
         existing = await seed_db.scalar(select(GiftCatalog).limit(1))
         if not existing:
             seed_db.add_all([
@@ -1939,6 +1944,52 @@ button,.send,.save,.icon,.chat-menu{
 .secondary-username-line{font-size:11px!important;line-height:14px!important;color:#8d8d8d!important;margin-top:2px!important;font-weight:400!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .profile-secondary-username{font-size:12px;color:#9aa6b2;margin-top:2px;line-height:15px;font-weight:400}
 
+.gift-send-pill{display:block;width:100%;margin:16px 0 4px;padding:11px 20px;border:0;border-radius:999px;background:#2f2f2f;color:#fff;font-size:15px;font-weight:700;cursor:pointer;transition:transform .16s ease,background .16s ease,box-shadow .16s ease}.gift-send-pill:active{transform:scale(.96);background:#3a3a3a;box-shadow:0 0 18px rgba(255,255,255,.08)}.gift-catalog-drawer{margin-top:14px;max-height:70vh;overflow-y:auto;padding-bottom:8px}.gift-catalog-drawer .gift-card{animation:rgGiftIn .32s ease both}
+
+.gift-chat-message{
+  display:flex;
+  justify-content:center;
+  width:100%;
+  margin:12px 0;
+  animation:giftChatMessageIn .38s cubic-bezier(.2,.8,.2,1) both;
+}
+.gift-chat-card{
+  min-width:210px;
+  max-width:78%;
+  padding:14px 18px;
+  border-radius:20px;
+  background:linear-gradient(180deg,rgba(55,55,55,.96),rgba(34,34,34,.96));
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:0 8px 28px rgba(0,0,0,.28);
+  text-align:center;
+}
+.gift-chat-emoji{
+  font-size:42px;
+  line-height:1;
+  margin-bottom:8px;
+  animation:giftChatEmojiPop .45s cubic-bezier(.2,1.4,.4,1) both;
+}
+.gift-chat-text{
+  font-size:14px;
+  font-weight:700;
+  line-height:1.35;
+}
+.gift-chat-price{
+  margin-top:5px;
+  font-size:13px;
+  opacity:.72;
+}
+@keyframes giftChatMessageIn{
+  from{opacity:0;transform:translateY(12px) scale(.96)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+@keyframes giftChatEmojiPop{
+  from{opacity:0;transform:scale(.55) rotate(-8deg)}
+  to{opacity:1;transform:scale(1) rotate(0)}
+}
+@media (prefers-reduced-motion:reduce){
+  .gift-chat-message,.gift-chat-emoji{animation:none}
+}
 </style>
 </head>
 <body>
@@ -2461,12 +2512,17 @@ async function showProfileGifts(userId, username){
   try{
     box.innerHTML='<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="gift-empty">Загрузка подарков…</div></div>';
     const owned=await api('/api/gifts/user/'+userId);
-    const isMe=Number(userId)===Number(me.id);
     const ownedHtml=owned.length?owned.map((g,i)=>`<div class="profile-gift-card" style="animation-delay:${Math.min(i,8)*.05}s" onclick='openGiftDetails(${JSON.stringify(g).replace(/'/g,"&#39;")})'><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-serial">#${g.serial}</div></div>`).join(''):'<div class="gift-empty">Подарков пока нет 🎁</div>';
-    const catalogHtml=!isMe?`<div class="profile-section" style="margin-top:18px">Подарить</div><div class="gifts-grid" style="margin-top:10px">${(await api('/api/gifts/catalog')).map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${userId},${g.id},'${esc(g.name)}','${esc(username||'user')}')">Подарить</button></div>`).join('')}</div>`:'';
-    box.innerHTML=`<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="profile-gifts-grid">${ownedHtml}</div>${catalogHtml}</div>`;
+    box.innerHTML=`<div class="profile-gifts-section"><div class="profile-section">Подарки</div><div class="profile-gifts-grid">${ownedHtml}</div><button class="gift-send-pill" onclick="openGiftCatalog(${Number(userId)},'${esc(username||'user')}')">Подарить</button></div>`;
     box.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){box.innerHTML='';showToast(e.message)}
+}
+async function openGiftCatalog(recipientId, recipientUsername){
+  try{
+    const catalog=await api('/api/gifts/catalog');
+    const cards=catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.05}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${Number(recipientId)},${g.id},'${esc(g.name)}','${esc(recipientUsername||'user')}')">Подарить</button></div>`).join('');
+    openDrawer(`<h2>🎁 Подарки</h2><div class="gifts-grid gift-catalog-drawer">${cards}</div>`);
+  }catch(e){showToast(e.message)}
 }
 function openGiftDetails(g){
   const time=g.acquired_at?new Date(g.acquired_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'—';
@@ -2475,14 +2531,34 @@ function openGiftDetails(g){
   openDrawer(`<div class="gift-detail"><div class="gift-detail-art">${g.emoji}</div><div class="gift-detail-name">${esc(g.name)}</div><div class="gift-detail-rarity">${esc(g.rarity)}${g.serial?' · #'+g.serial:''}</div>${g.description?`<div style="color:#8d8d8d;margin-top:8px">${esc(g.description)}</div>`:''}<div class="gift-detail-info"><div class="gift-detail-row"><span>Отправитель:</span><span>${esc(sender)}</span></div><div class="gift-detail-row"><span>Владелец:</span><span>${esc(owner)}</span></div><div class="gift-detail-row"><span>Время отправки:</span><span>${esc(time)}</span></div></div><button class="gift-done" onclick="closeDrawer()">Готово</button></div>`);
 }
 async function openGifts(userId, username){showProfileGifts(userId,username)}
-async function sendGift(recipientId,giftId,name,recipientUsername){
-  if(!confirm('Подарить «'+name+'»?'))return;
+async function sendGift(recipientId,giftId,giftName,recipientUsername){
   try{
-    const fd=new FormData();fd.append('recipient_id',recipientId);fd.append('gift_id',giftId);
-    const d=await api('/api/gifts/send',{method:'POST',body:fd});
-    me.stars=d.stars;
-    showToast('🎁 Подарок отправлен! #'+d.gift.serial);
-    openGifts(recipientId, recipientUsername||'user');
+    const result=await api('/api/gifts/send',{
+      method:'POST',
+      body:JSON.stringify({recipient_id:Number(recipientId),gift_id:Number(giftId)})
+    });
+    closeDrawer?.();
+    showToast('Подарок отправлен 🎁');
+
+    // Центрированное сообщение о подарке в текущем чате.
+    if(selected && Number(selected.id)===Number(recipientId)){
+      const catalogGift=(window.__giftCatalog||[]).find(g=>Number(g.id)===Number(giftId));
+      const emoji=result?.gift?.emoji || catalogGift?.emoji || '🎁';
+      const price=Number(result?.gift?.price_stars ?? catalogGift?.price_stars ?? 0);
+
+      const messages=$('messages') || $('chatMessages');
+      if(messages){
+        const wrap=document.createElement('div');
+        wrap.className='gift-chat-message';
+        wrap.innerHTML=`<div class="gift-chat-card">
+          <div class="gift-chat-emoji">${emoji}</div>
+          <div class="gift-chat-text">@${esc(me.username||'user')} отправил вам подарок!</div>
+          <div class="gift-chat-price">Стоимостью ${price}⭐️</div>
+        </div>`;
+        messages.appendChild(wrap);
+        requestAnimationFrame(()=>{messages.scrollTop=messages.scrollHeight});
+      }
+    }
   }catch(e){showToast(e.message)}
 }
 
