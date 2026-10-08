@@ -2140,44 +2140,45 @@ button,.send,.save,.icon,.chat-menu{
 }
 
 
-/* ===== RayfGram verification seal ===== */
+/* ===== RayfGram verification seal — straight, symmetric, like the reference ===== */
 .verified-badge{
   display:inline-flex!important;
-  width:20px!important;
-  height:20px!important;
+  width:21px!important;
+  height:21px!important;
   margin-left:4px!important;
   vertical-align:-4px!important;
-  flex:none;
+  flex:none!important;
   filter:none!important;
   opacity:1!important;
-  line-height:0;
-  position:relative;
+  line-height:0!important;
+  position:relative!important;
   background:transparent!important;
   border-radius:0!important;
   box-shadow:none!important;
-  animation:rgVerifiedPop .34s cubic-bezier(.2,.8,.2,1) both;
+  transform:none!important;
+  animation:rgVerifiedPop .22s ease-out both;
 }
 .verified-badge::after{content:none!important;display:none!important;}
 .verified-badge svg{
-  width:20px;
-  height:20px;
-  display:block;
-  overflow:visible;
+  width:21px!important;
+  height:21px!important;
+  display:block!important;
+  overflow:visible!important;
+  transform:none!important;
 }
 .verified-badge .verified-seal{
-  fill:#1697ee;
+  fill:#1498ee!important;
 }
 .verified-badge .verified-check{
-  fill:none;
-  stroke:#fff;
-  stroke-width:3.15;
-  stroke-linecap:round;
-  stroke-linejoin:round;
+  fill:none!important;
+  stroke:#fff!important;
+  stroke-width:3.2!important;
+  stroke-linecap:round!important;
+  stroke-linejoin:round!important;
 }
 @keyframes rgVerifiedPop{
-  0%{opacity:0;transform:scale(.55) rotate(-8deg)}
-  65%{opacity:1;transform:scale(1.12) rotate(2deg)}
-  100%{opacity:1;transform:scale(1) rotate(0)}
+  0%{opacity:0;transform:scale(.88)}
+  100%{opacity:1;transform:scale(1)}
 }
 
 /* RayfGram: reliable chat scrolling */
@@ -2326,7 +2327,7 @@ function avatarHtml(u,cls='avatar'){
  const ringCls=cls==='chat-avatar'?'story-ring story-ring-chat':'story-ring'; return hasStory?`<div class="${ringCls}" onclick="event.stopPropagation();openStoryViewer(${Number(u?.id)},'${esc(u?.username||'user')}')">${inner}</div>`:inner;
 }
 function verifiedBadge(){
-  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 32 32" aria-hidden="true"><path class="verified-seal" d="M16 1.8l2.45 2.05 3.15-.55 1.25 2.92 3.02 1.08-.18 3.2 2.48 2.02-1.55 2.82 1.55 2.82-2.48 2.02.18 3.2-3.02 1.08-1.25 2.92-3.15-.55L16 30.2l-2.45-2.05-3.15.55-1.25-2.92-3.02-1.08.18-3.2-2.48-2.02 1.55-2.82-1.55-2.82 2.48-2.02-.18-3.2 3.02-1.08 1.25-2.92 3.15.55L16 1.8z"></path><path class="verified-check" d="M9.1 16.2l4.1 4.05 9.7-10.35"></path></svg></span>';
+  return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 32 32" aria-hidden="true"><path class="verified-seal" d="M16 1.35c1.55 0 2.42 2.18 3.82 2.52 1.44.35 3.18-1.13 4.42-.34 1.27.81.78 3.08 1.83 4.13 1.05 1.05 3.32.56 4.13 1.83.79 1.24-.69 2.98-.34 4.42.34 1.4 2.52 2.27 2.52 3.82s-2.18 2.42-2.52 3.82c-.35 1.44 1.13 3.18.34 4.42-.81 1.27-3.08.78-4.13 1.83-1.05 1.05-.56 3.32-1.83 4.13-1.24.79-2.98-.69-4.42-.34-1.4.34-2.27 2.52-3.82 2.52s-2.42-2.18-3.82-2.52c-1.44-.35-3.18 1.13-4.42.34-1.27-.81-.78-3.08-1.83-4.13-1.05-1.05-3.32-.56-4.13-1.83-.79-1.24.69-2.98.34-4.42C1.18 18.18-1 17.31-1 15.76s2.18-2.42 2.52-3.82c.35-1.44-1.13-3.18-.34-4.42.81-1.27 3.08-.78 4.13-1.83 1.05-1.05.56-3.32 1.83-4.13 1.24-.79 2.98.69 4.42.34C13.58 3.53 14.45 1.35 16 1.35z" transform="translate(1 0.25) scale(.9375)"></path><path class="verified-check" d="M9.15 16.05l4.1 4.05 9.6-10.25"></path></svg></span>';
 }
 function scamBadge(){
   return '<span class="scam-badge" title="Метка SCAM" aria-label="Метка SCAM">SCAM</span>';
