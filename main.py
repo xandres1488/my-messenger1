@@ -1389,6 +1389,9 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-hero .profile-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 .profile-name{font-size:27px;font-weight:800;letter-spacing:-.5px;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;width:100%}
 .profile-username{color:#8ea2b1;margin-top:7px;font-size:15px;line-height:1.3;width:100%}
+.profile-username-stack{width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;margin-top:7px;line-height:1.15}
+.profile-username-stack .profile-username{margin-top:0}
+.profile-secondary-username{font-size:11px;color:#7f8b96;margin-top:2px;line-height:1.15;font-weight:400}
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:12px 0 18px}
 .profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
@@ -2136,8 +2139,10 @@ function openPublicProfile(username){
        ${String(me?.username||'').toLowerCase()===String(u.username||'').toLowerCase()?`<button class="profile-bg-menu-btn" aria-label="Цвет фона" onclick="toggleProfileBgMenu('${esc(u.username)}','${u.profile_bg||'gray'}')">⋮</button><div id="profileBgMenu"></div>`:''}
        <div class="profile-avatar">${u.avatar?`<img src="${u.avatar}?t=${Date.now()}">`:initials(u)}</div>
        <div class="profile-name">${esc(u.display_name||u.username)} ${v}${fakeBadge(u)}${scam}</div>
-       <div class="profile-username">@${esc(u.username)}</div>
-       ${u.secondary_username?`<div class="profile-secondary-username">@${esc(u.secondary_username)}</div>`:''}
+       <div class="profile-username-stack">
+         <div class="profile-username">@${esc(u.username)}</div>
+         ${String(u.username||'').toLowerCase()==='monk' && String(u.secondary_username||'').toLowerCase()==='durov'?`<div class="profile-secondary-username">а так же @durov</div>`:''}
+       </div>
        <div class="profile-status">${u.online?'🟢 в сети':'⚪ офлайн'}</div>
      </div>
      <div class="profile-actions">
