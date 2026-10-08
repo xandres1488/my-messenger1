@@ -2008,7 +2008,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
 .nft-bg-purple{background:radial-gradient(circle at 30% 25%,#9b7cff 0,#5b2bbd 34%,#171025 78%)}.nft-bg-blue{background:radial-gradient(circle at 30% 25%,#7db8ff 0,#2458b8 38%,#0c1630 82%)}.nft-bg-emerald{background:radial-gradient(circle at 30% 25%,#76ffc4 0,#168b63 38%,#071b16 82%)}.nft-bg-sunset{background:linear-gradient(145deg,#ffca7a 0,#ff6b5c 42%,#76215c 100%)}.nft-bg-crimson{background:radial-gradient(circle at 30% 25%,#ff7c91 0,#a51d3e 38%,#250b15 82%)}.nft-bg-pink{background:radial-gradient(circle at 30% 25%,#ffd0ef 0,#db5da7 40%,#451a50 82%)}.nft-bg-black{background:radial-gradient(circle at 30% 25%,#59636d 0,#222a31 36%,#07090b 82%)}.nft-bg-gold{background:radial-gradient(circle at 30% 25%,#fff0a8 0,#c58b1d 42%,#3a2505 82%)}.nft-bg-cosmic{background:radial-gradient(circle at 25% 20%,#d1a3ff 0,#6b39bd 28%,#101c48 62%,#050711 100%)}.nft-bg-lagoon{background:radial-gradient(circle at 30% 20%,#b8ffff 0,#36a9b7 36%,#0b2f3d 82%)}
 .nft-bg-purple::before,.nft-bg-blue::before,.nft-bg-emerald::before,.nft-bg-sunset::before,.nft-bg-crimson::before,.nft-bg-pink::before,.nft-bg-black::before,.nft-bg-gold::before,.nft-bg-cosmic::before,.nft-bg-lagoon::before{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.18) 1px,transparent 1.5px);background-size:18px 18px;opacity:.25;z-index:0}
-.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::after{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 35%,rgba(255,255,255,.26),transparent 34%),linear-gradient(120deg,transparent 35%,rgba(255,255,255,.14) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 3.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:62%;height:62%;filter:drop-shadow(0 14px 22px rgba(0,0,0,.55));animation:nftModel 2.7s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.035)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
+.nft-art{position:relative;width:100%;max-width:190px;aspect-ratio:1;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:24px;isolation:isolate;animation:nftFloat 3s ease-in-out infinite}.nft-art::after{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 35%,rgba(255,255,255,.26),transparent 34%),linear-gradient(120deg,transparent 35%,rgba(255,255,255,.14) 48%,transparent 60%);transform:translateX(-70%) rotate(8deg);animation:nftShine 3.8s linear infinite;z-index:2;pointer-events:none}.nft-model{position:relative;z-index:1;width:62%;height:62%;filter:drop-shadow(0 14px 22px rgba(0,0,0,.55));animation:nftModel 2.7s ease-in-out infinite}.nft-model svg{width:100%;height:100%;display:block}.nft-glass{position:absolute;inset:8%;border:1px solid rgba(255,255,255,.12);border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.10),transparent 42%,rgba(0,0,0,.10));z-index:2;pointer-events:none}.nft-sparkle{position:absolute;right:12%;top:10%;z-index:4;color:rgba(255,255,255,.72);font-size:13px;animation:nftSparkle 1.8s ease-in-out infinite;pointer-events:none}@keyframes nftSparkle{0%,100%{opacity:.35;transform:scale(.8) rotate(0deg)}50%{opacity:1;transform:scale(1.2) rotate(18deg)}}.nft-level{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:#232a31;color:#dfe8ef;font-size:11px;font-weight:800}.nft-market-card{position:relative;background:linear-gradient(180deg,#1d2329,#12161a);border:1px solid #303943;border-radius:20px;padding:12px;overflow:hidden}.nft-market-card .nft-art{max-width:150px}.nft-badge{position:absolute;right:9px;top:9px;padding:4px 7px;border-radius:999px;background:#0d1115cc;border:1px solid #39424b;font-size:10px;font-weight:900}.nft-upgrade-btn{background:linear-gradient(135deg,#7c3aed,#2aabee)!important}.nft-market-price{font-size:15px;color:#ffd76a;font-weight:900;margin-top:7px}.nft-attrs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:7px}.nft-attr{font-size:10px;color:#98a5b1;background:#20262d;border-radius:999px;padding:4px 7px}.nft-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}.nft-market-grid .nft-market-card:nth-child(odd){animation-delay:.03s}@keyframes nftFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}@keyframes nftModel{0%,100%{transform:rotate(-1deg) scale(1)}50%{transform:rotate(1deg) scale(1.035)}}@keyframes nftShine{0%{transform:translateX(-80%) rotate(8deg)}55%,100%{transform:translateX(100%) rotate(8deg)}}
 .gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
 .gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
@@ -3081,25 +3081,77 @@ function nftBackdropClass(name){
 function nftArt(g,small=false){
  if(!g?.is_collectible) return `<div class="gift-emoji">${g?.emoji||'🎁'}</div>`;
  const code=String(g.model_code||'default');
- const palettes={Pepe:['#55d66b','#1c7c43'],MidasPepe:['#ffe27a','#b67a12'],DiamondPepe:['#d9fbff','#4aa6d8'],LuckyCat:['#ffd66b','#d36a28'],CyberPanda:['#8cf7ff','#6b43ff'],NeonFox:['#ff9d4d','#ff3f81'],RayfBot:['#c99cff','#6d35e8'],AlienRayf:['#b8ff87','#38a85c'],MysticEye:['#8ef4ff','#6436ff'],RayfCrown:['#fff0a3','#c99721'],DarkSkull:['#d2d6dc','#4a4f57'],RayfDragon:['#72ff9d','#168b55'],MiniPepe:['#8bea8e','#2e8e4c'],TinyLuckyCat:['#ffe98a','#d98a37'],MiniAlien:['#c7ff9b','#45b85d'],PocketRayfBot:['#e0c9ff','#8249df'],MiniNeonFox:['#ffb06b','#e34c9a'],LittleRayfCrown:['#fff2a8','#b8891e']};
- const p=palettes[code]||['#ffffff','#777777'];
- const eye=(x,y)=>`<circle cx="${x}" cy="${y}" r="5" fill="#111"/><circle cx="${x-1.5}" cy="${y-1.5}" r="1.5" fill="#fff"/>`;
+ const palettes={
+  Pepe:['#8eea63','#23783f'],MidasPepe:['#fff0a1','#a66a08'],DiamondPepe:['#f2ffff','#3f9ed2'],
+  LuckyCat:['#ffd85c','#bf641f'],CyberPanda:['#d7fbff','#6252d9'],NeonFox:['#ffb05d','#d93e8d'],
+  RayfBot:['#d7b9ff','#6336cf'],AlienRayf:['#d7ff9b','#32945c'],MysticEye:['#bffbff','#5a37cf'],
+  RayfCrown:['#fff2a8','#bd8615'],DarkSkull:['#edf1f4','#454b55'],RayfDragon:['#8cffad','#14784a'],
+  MiniPepe:['#9ff17c','#328c4c'],TinyLuckyCat:['#ffe98b','#d5792c'],MiniAlien:['#d7ffa8','#43a75d'],
+  PocketRayfBot:['#ead9ff','#7544ce'],MiniNeonFox:['#ffc080','#df4c91'],LittleRayfCrown:['#fff3af','#b98b20']
+ };
+ const p=palettes[code]||['#e8edf2','#68727d'];
+ const uid='n'+String(g.id||Math.random().toString(36).slice(2));
+ const eye=(x,y,s=1)=>`<ellipse cx="${x}" cy="${y}" rx="${8*s}" ry="${11*s}" fill="#101317"/><circle cx="${x-2*s}" cy="${y-3*s}" r="${2.4*s}" fill="#fff"/>`;
+ const shine=(x,y)=>`<ellipse cx="${x}" cy="${y}" rx="28" ry="11" fill="#fff" opacity=".16" transform="rotate(-25 ${x} ${y})"/>`;
  let shape='';
- if(code.toLowerCase().includes('pepe')) shape=`<path d="M45 70 Q50 30 95 28 Q140 30 145 70 L132 138 Q100 160 68 138 Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="77" cy="76" rx="18" ry="24" fill="#d8f6d2"/><ellipse cx="118" cy="76" rx="18" ry="24" fill="#d8f6d2"/>${eye(78,78)}${eye(118,78)}<path d="M67 111 Q98 132 129 111" fill="none" stroke="#3c513f" stroke-width="7" stroke-linecap="round"/>`;
- else if(code.toLowerCase().includes('cat')) shape=`<path d="M45 62 L55 28 L78 47 Q100 36 122 47 L145 28 L155 62 Q160 115 100 142 Q40 115 45 62Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,76)}${eye(122,76)}<path d="M92 99 Q100 106 108 99" fill="none" stroke="#7d4b32" stroke-width="6" stroke-linecap="round"/>`;
- else if(code.toLowerCase().includes('panda')) shape=`<circle cx="100" cy="88" r="57" fill="#f1f3f5" stroke="${p[1]}" stroke-width="7"/><ellipse cx="73" cy="77" rx="17" ry="23" fill="#15191d" transform="rotate(-25 73 77)"/><ellipse cx="127" cy="77" rx="17" ry="23" fill="#15191d" transform="rotate(25 127 77)"/>${eye(77,80)}${eye(123,80)}<path d="M87 111 Q100 121 113 111" fill="none" stroke="#15191d" stroke-width="7"/>`;
- else if(code.toLowerCase().includes('fox')) shape=`<path d="M43 68 L56 27 L83 47 Q100 40 117 47 L144 27 L157 68 Q155 120 100 145 Q45 120 43 68Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><path d="M70 93 Q100 115 130 93 Q123 129 100 135 Q77 129 70 93Z" fill="#fff3e8"/>${eye(78,79)}${eye(122,79)}`;
- else if(code.toLowerCase().includes('bot')) shape=`<rect x="48" y="43" width="104" height="94" rx="24" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><circle cx="100" cy="31" r="9" fill="${p[1]}"/><path d="M100 31 V19" stroke="${p[1]}" stroke-width="6"/>${eye(78,82)}${eye(122,82)}<path d="M76 108 Q100 124 124 108" fill="none" stroke="#3c2f58" stroke-width="7"/>`;
- else if(code.toLowerCase().includes('alien')) shape=`<ellipse cx="100" cy="86" rx="59" ry="69" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="75" cy="82" rx="17" ry="25" fill="#10251a"/><ellipse cx="125" cy="82" rx="17" ry="25" fill="#10251a"/><circle cx="76" cy="80" r="6" fill="#fff"/><circle cx="124" cy="80" r="6" fill="#fff"/><path d="M79 112 Q100 125 121 112" fill="none" stroke="#2b6b38" stroke-width="7"/>`;
- else if(code.toLowerCase().includes('eye')) shape=`<ellipse cx="100" cy="90" rx="66" ry="43" fill="#e9fbff" stroke="${p[1]}" stroke-width="8"/><circle cx="100" cy="90" r="25" fill="${p[0]}" stroke="#17222a" stroke-width="6"/><circle cx="100" cy="90" r="9" fill="#111"/>`;
- else if(code.toLowerCase().includes('crown')) shape=`<path d="M44 120 L53 55 L81 84 L100 45 L119 84 L147 55 L156 120 Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="8"/><rect x="49" y="118" width="102" height="25" rx="9" fill="${p[1]}"/>`;
- else if(code.toLowerCase().includes('skull')) shape=`<path d="M45 86 Q45 34 100 34 Q155 34 155 86 Q155 119 129 129 L129 148 L113 148 L113 132 L87 132 L87 148 L71 148 L71 129 Q45 119 45 86Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/><ellipse cx="77" cy="88" rx="15" ry="18" fill="#111"/><ellipse cx="123" cy="88" rx="15" ry="18" fill="#111"/><path d="M92 108 L100 96 L108 108" fill="#111"/>`;
- else if(code.toLowerCase().includes('dragon')) shape=`<path d="M42 117 Q30 68 62 46 L50 25 L83 42 Q100 31 117 42 L150 25 L138 46 Q170 68 158 117 Q142 147 100 153 Q58 147 42 117Z" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,78)}${eye(122,78)}<path d="M70 111 Q100 132 130 111" fill="none" stroke="#164e32" stroke-width="7"/>`;
- else shape=`<circle cx="100" cy="90" r="57" fill="${p[0]}" stroke="${p[1]}" stroke-width="7"/>${eye(78,84)}${eye(122,84)}`;
- const svg=`<svg viewBox="0 0 200 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="g${String(g.id)}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient></defs>${shape}</svg>`;
+ if(code.includes('Pepe')){
+   shape=`<path d="M50 70C50 40 70 25 100 25s50 15 50 45v47c0 25-20 40-50 40s-50-15-50-40Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <ellipse cx="76" cy="76" rx="18" ry="25" fill="#dff6d5"/><ellipse cx="124" cy="76" rx="18" ry="25" fill="#dff6d5"/>
+   ${eye(78,78,.9)}${eye(122,78,.9)}<path d="M69 110Q100 135 131 110" fill="none" stroke="#314a39" stroke-width="8" stroke-linecap="round"/>
+   <path d="M56 55Q100 22 144 55" fill="none" stroke="#fff" opacity=".28" stroke-width="7" stroke-linecap="round"/>`;
+ }else if(code.includes('LuckyCat')){
+   shape=`<path d="M47 66L56 27 82 49Q100 39 118 49L144 27 153 66Q158 119 100 148Q42 119 47 66Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M94 101Q100 107 106 101" fill="none" stroke="#7d4b2e" stroke-width="6" stroke-linecap="round"/>
+   <path d="M57 68Q75 45 100 46Q125 45 143 68" fill="none" stroke="#fff" opacity=".3" stroke-width="7"/>`;
+ }else if(code.includes('Panda')){
+   shape=`<circle cx="100" cy="91" r="60" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <ellipse cx="72" cy="79" rx="18" ry="27" fill="#171b20" transform="rotate(-25 72 79)"/>
+   <ellipse cx="128" cy="79" rx="18" ry="27" fill="#171b20" transform="rotate(25 128 79)"/>
+   ${eye(76,82,.8)}${eye(124,82,.8)}<path d="M87 111Q100 122 113 111" fill="none" stroke="#171b20" stroke-width="7" stroke-linecap="round"/>
+   <path d="M61 62Q100 33 139 62" fill="none" stroke="#fff" opacity=".25" stroke-width="8" stroke-linecap="round"/>`;
+ }else if(code.includes('Fox')){
+   shape=`<path d="M43 72L55 28 84 49Q100 42 116 49L145 28 157 72Q154 122 100 150Q46 122 43 72Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <path d="M68 94Q100 113 132 94Q126 133 100 140Q74 133 68 94Z" fill="#fff4e9"/>
+   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M58 64Q100 37 142 64" fill="none" stroke="#fff" opacity=".28" stroke-width="7"/>`;
+ }else if(code.includes('Bot')){
+   shape=`<rect x="45" y="48" width="110" height="92" rx="28" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <circle cx="100" cy="31" r="9" fill="${p[1]}"/><path d="M100 31V17" stroke="${p[1]}" stroke-width="6" stroke-linecap="round"/>
+   <rect x="59" y="62" width="82" height="55" rx="19" fill="#11151b" opacity=".18"/>
+   ${eye(78,84,.7)}${eye(122,84,.7)}<path d="M77 108Q100 123 123 108" fill="none" stroke="#403259" stroke-width="7" stroke-linecap="round"/>
+   ${shine(82,60)}`;
+ }else if(code.includes('Alien')){
+   shape=`<ellipse cx="100" cy="90" rx="62" ry="73" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <ellipse cx="75" cy="83" rx="19" ry="29" fill="#12231b"/><ellipse cx="125" cy="83" rx="19" ry="29" fill="#12231b"/>
+   <circle cx="76" cy="80" r="6" fill="#fff"/><circle cx="124" cy="80" r="6" fill="#fff"/>
+   <path d="M79 116Q100 128 121 116" fill="none" stroke="#2c6838" stroke-width="7" stroke-linecap="round"/>
+   <path d="M62 52Q100 25 138 52" fill="none" stroke="#fff" opacity=".26" stroke-width="8" stroke-linecap="round"/>`;
+ }else if(code.includes('Eye')){
+   shape=`<ellipse cx="100" cy="92" rx="70" ry="47" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>
+   <circle cx="100" cy="92" r="28" fill="#efffff" stroke="#17222a" stroke-width="6"/>
+   <circle cx="100" cy="92" r="11" fill="#101317"/><circle cx="96" cy="88" r="3" fill="#fff"/>`;
+ }else if(code.includes('Crown')){
+   shape=`<path d="M42 121L51 52 80 83 100 40 120 83 149 52 158 121Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>
+   <rect x="47" y="118" width="106" height="28" rx="10" fill="${p[1]}"/>
+   <circle cx="51" cy="53" r="5" fill="#fff"/><circle cx="100" cy="41" r="5" fill="#fff"/><circle cx="149" cy="53" r="5" fill="#fff"/>`;
+ }else if(code.includes('Skull')){
+   shape=`<path d="M44 87Q44 32 100 32T156 87Q156 120 130 131V150H112V135H88V150H70V131Q44 120 44 87Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   <ellipse cx="76" cy="88" rx="16" ry="20" fill="#101317"/><ellipse cx="124" cy="88" rx="16" ry="20" fill="#101317"/>
+   <path d="M92 110L100 97 108 110" fill="#101317"/><path d="M61 61Q100 35 139 61" fill="none" stroke="#fff" opacity=".22" stroke-width="7"/>`;
+ }else if(code.includes('Dragon')){
+   shape=`<path d="M43 119Q30 73 62 49L50 25 83 42Q100 31 117 42L150 25 138 49Q170 73 157 119Q141 149 100 155Q59 149 43 119Z" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="6"/>
+   ${eye(78,80,.8)}${eye(122,80,.8)}<path d="M70 112Q100 132 130 112" fill="none" stroke="#164e32" stroke-width="7" stroke-linecap="round"/>
+   <path d="M57 59Q100 30 143 59" fill="none" stroke="#fff" opacity=".24" stroke-width="7"/>`;
+ }else{
+   shape=`<circle cx="100" cy="91" r="59" fill="url(#body${uid})" stroke="${p[1]}" stroke-width="7"/>${eye(78,84,.8)}${eye(122,84,.8)}${shine(82,58)}`;
+ }
+ const svg=`<svg viewBox="0 0 200 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+ <defs><linearGradient id="body${uid}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${p[0]}"/><stop offset=".55" stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient>
+ <filter id="shadow${uid}" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-opacity=".35"/></filter></defs>
+ <g filter="url(#shadow${uid})">${shape}</g></svg>`;
  const pattern=String(g.pattern||'Classic');
- return `<div class="nft-art ${nftBackdropClass(g.backdrop)}" title="${esc(g.name)}"><div class="nft-model">${svg}</div><div style="position:absolute;left:9px;bottom:8px;z-index:3;font-size:9px;color:#ffffffb8;font-weight:800">${esc(pattern)}</div></div>`;
+ return `<div class="nft-art ${nftBackdropClass(g.backdrop)}" title="${esc(g.name)}"><div class="nft-model">${svg}</div><div class="nft-glass"></div><div class="nft-sparkle">✦</div><div style="position:absolute;left:9px;bottom:8px;z-index:3;font-size:9px;color:#ffffffb8;font-weight:800">${esc(pattern)}</div></div>`;
 }
+
 async function showProfileGifts(userId, username){
   const box=$('profileGiftsBox');
   if(!box)return;
