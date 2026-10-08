@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Boolean, LargeBinary, select, or_, and_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from pwdlib import PasswordHash
@@ -753,6 +754,8 @@ async def register(username: str = Form(...), password: str = Form(...), display
     display_name = display_name.strip()
     if len(username) < 5 or len(username) > 32:
         raise HTTPException(400, "Username: 5–32 символа")
+    if not re.fullmatch(r"[a-z0-9_]+", username):
+        raise HTTPException(400, "Username: только латинские буквы, цифры и _")
     if len(password) < 6:
         raise HTTPException(400, "Пароль: минимум 6 символов")
     async with SessionLocal() as db:
@@ -1053,16 +1056,21 @@ async def set_profile_username(username: str = Form(...), user: User = Depends(c
     if not re.fullmatch(r"[a-z0-9_]+", username):
         raise HTTPException(400, "Юзернейм: только латинские буквы, цифры и _")
     async with SessionLocal() as db:
-        q = await db.execute(select(User).where(func.lower(User.username) == username))
-        exists = q.scalar_one_or_none()
-        if exists and exists.id != user.id:
-            raise HTTPException(400, "Этот юзернейм уже занят")
         u = await db.get(User, user.id)
         if not u:
             raise HTTPException(404, "Пользователь не найден")
-        u.username = username
-        await db.commit()
-        await db.refresh(u)
+        if u.username == username:
+            return {"username": u.username}
+        q = await db.execute(select(User.id).where(func.lower(User.username) == username, User.id != user.id).limit(1))
+        if q.scalar_one_or_none() is not None:
+            raise HTTPException(400, "Этот юзернейм уже занят")
+        try:
+            u.username = username
+            await db.commit()
+            await db.refresh(u)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(400, "Этот юзернейм уже занят")
         return {"username": u.username}
 
 @app.post("/api/profile/background")
@@ -2254,7 +2262,7 @@ button,.send,.save,.icon,.chat-menu{
   </div>
   <div id="regBox" class="hidden">
    <input id="regName" class="field" placeholder="Имя">
-   <input id="regUser" class="field" placeholder="Username (без@)">
+   <input id="regUser" class="field" placeholder="Username (без@)" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="this.value=this.value.replace(/[^A-Za-z0-9_]/g,'').toLowerCase()">
    <input id="regPass" class="field" type="password" placeholder="Пароль (6+)">
    <button class="primary" onclick="register()">Зарегистрироваться</button>
    <button class="switch" onclick="showLogin()">У меня уже есть аккаунт</button>
@@ -2358,7 +2366,7 @@ async function login(){
  try{let fd=new FormData();fd.append('username',$('loginUser').value);fd.append('password',$('loginPass').value);if(window.loginCode)fd.append('code',window.loginCode);let r=await fetch('/api/login',{method:'POST',body:fd});if(!r.ok){let j=await r.json().catch(()=>null);throw Error(j?.detail||'Ошибка входа')}let d=await r.json();if(d.twofa_required){let code=prompt('🔐 Введите 6-значный код 2FA');if(!code)return;window.loginCode=code;return login()}window.loginCode='';token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function register(){
- try{let fd=new FormData();fd.append('username',$('regUser').value);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
+ try{const username=String($('regUser').value||'').trim().replace(/^@/,'').toLowerCase();$('regUser').value=username;if(username.length<5){showToast('Юзернейм минимум 5 символов');return}if(username.length>32){showToast('Юзернейм максимум 32 символа');return}if(!/^[a-z0-9_]+$/.test(username)){showToast('Только латинские буквы, цифры и _');return}let fd=new FormData();fd.append('username',username);fd.append('password',$('regPass').value);fd.append('display_name',$('regName').value);let r=await fetch('/api/register',{method:'POST',body:fd});if(!r.ok){let j=await r.json().catch(()=>null);throw Error(j?.detail||'Ошибка регистрации')}let d=await r.json();token=d.token;localStorage.setItem('rayf_token',token);await startApp()}catch(e){showToast(e.message)}
 }
 async function startApp(){
  try{me=normalizeVerified(await api('/api/me'));normalizeVerified(me);$('auth').classList.add('hidden');$('app').classList.remove('hidden');connect();await loadStorySummary();loadUsers()}catch(e){localStorage.removeItem('rayf_token');token='';showLogin();if(e?.message)showToast(e.message)}
@@ -2799,7 +2807,7 @@ function startProfileEdit(){
    <input id="pname" class="field" value="${esc(me.display_name)}" placeholder="Имя">
    <textarea id="pbio" class="field" rows="4" placeholder="О себе">${esc(me.bio)}</textarea>
    <div style="margin-top:10px;color:#8d8d8d;font-size:13px">Username</div>
-   <input id="pusername" class="field" value="${esc(me.username)}" placeholder="Username (без@)" maxlength="32" autocomplete="off">
+   <input id="pusername" class="field" value="${esc(me.username)}" placeholder="Username (без@)" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="this.value=this.value.replace(/[^A-Za-z0-9_]/g,'').toLowerCase()">
    <button class="save" onclick="saveProfile()">Сохранить изменения</button>
  </div>`;
  box.scrollIntoView({behavior:'smooth'});
@@ -2952,7 +2960,7 @@ function openEditUsername(){
   const current=String(me?.username||'').replace(/^@/,'');
   openDrawer(`<h2>✏️ Изменить юзернейм</h2>
     <p style="color:#8d8d8d">Минимум 5 символов, вводить без @.</p>
-    <input id="profileUsernameInput" class="input" value="${esc(current)}" placeholder="Юзернейм (без@)" maxlength="64" autocomplete="off">
+    <input id="profileUsernameInput" class="input" value="${esc(current)}" placeholder="Юзернейм (без@)" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="this.value=this.value.replace(/[^A-Za-z0-9_]/g,'').toLowerCase()">
     <button class="save" onclick="saveProfileUsername()">Сохранить</button>`);
 }
 
