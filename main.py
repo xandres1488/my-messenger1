@@ -244,6 +244,112 @@ class Reaction(Base):
 
 async def init_db():
     async with engine.begin() as conn:
+        # КРИТИЧЕСКИ ВАЖНО:
+        # старые версии RayfGram могли оставить UNIQUE-ограничения в PostgreSQL.
+        # create_all() проверяет существование таблиц, но не чинит уже существующие
+        # ограничения. Поэтому сначала безопасно снимаем только те ограничения,
+        # которые RayfGram потом восстанавливает после очистки данных.
+        #
+        # Если таблицы ещё нет (новая база), команды ничего не делают.
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.groups') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_attribute a ON a.attrelid = c.conrelid
+                                           AND a.attnum = ANY(c.conkey)
+                        WHERE c.conrelid = 'public.groups'::regclass
+                          AND c.contype = 'u'
+                          AND a.attname = 'username'
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE public.groups DROP CONSTRAINT IF EXISTS %I',
+                            r.conname
+                        );
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.groups') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'groups'
+                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%username%'
+                    LOOP
+                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.user_gifts') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'user_gifts'
+                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                          AND indexdef ILIKE '%gift_id%'
+                          AND indexdef ILIKE '%serial%'
+                    LOOP
+                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.nft_market_listings') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_attribute a ON a.attrelid = c.conrelid
+                                           AND a.attnum = ANY(c.conkey)
+                        WHERE c.conrelid = 'public.nft_market_listings'::regclass
+                          AND c.contype = 'u'
+                          AND a.attname = 'user_gift_id'
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE public.nft_market_listings DROP CONSTRAINT IF EXISTS %I',
+                            r.conname
+                        );
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+        await conn.exec_driver_sql("""
+            DO $$
+            DECLARE r RECORD;
+            BEGIN
+                IF to_regclass('public.nft_market_listings') IS NOT NULL THEN
+                    FOR r IN
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'nft_market_listings'
+                          AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                          AND indexdef ILIKE '%user_gift_id%'
+                    LOOP
+                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
+                    END LOOP;
+                END IF;
+            END $$;
+        """)
+
         await conn.run_sync(Base.metadata.create_all)
         await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS secondary_username VARCHAR(32)")
         # Мягкая миграция существующей базы: старые аккаунты и сообщения сохраняются.
@@ -331,7 +437,16 @@ async def init_db():
             FROM ranked r
             WHERE g.id = r.id AND r.rn > 1
         """)
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_username ON groups(username)")
+        await conn.exec_driver_sql("""
+            DO $$
+            BEGIN
+                BEGIN
+                    CREATE UNIQUE INDEX uq_groups_username ON groups(username);
+                EXCEPTION WHEN duplicate_table OR unique_violation THEN
+                    NULL;
+                END;
+            END $$;
+        """)
         await conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
@@ -426,7 +541,16 @@ async def init_db():
                 END IF;
             END $$;
         """)
-        await conn.exec_driver_sql("CREATE UNIQUE INDEX uq_user_gift_serial ON user_gifts(gift_id, serial)")
+        await conn.exec_driver_sql("""
+            DO $$
+            BEGIN
+                BEGIN
+                    CREATE UNIQUE INDEX uq_user_gift_serial ON user_gifts(gift_id, serial);
+                EXCEPTION WHEN duplicate_table OR unique_violation THEN
+                    NULL;
+                END;
+            END $$;
+        """)
 
     # ВАЖНО: seed выполняем ПОСЛЕ завершения транзакции миграций.
     # Иначе отдельное соединение SessionLocal не видит ещё не закоммиченные таблицы.
@@ -507,7 +631,17 @@ async def init_db():
 
 @app.on_event("startup")
 async def startup():
-    await init_db()
+    try:
+        await init_db()
+    except Exception as exc:
+        # Не скрываем настоящую причину в Render Logs.
+        # Это особенно важно для asyncpg/SQLAlchemy, где верхняя строка
+        # может показывать только ссылку gkpj.
+        print("RAYFGRAM STARTUP ERROR:", repr(exc), flush=True)
+        orig = getattr(exc, "orig", None)
+        if orig is not None:
+            print("RAYFGRAM DB ORIGINAL ERROR:", repr(orig), flush=True)
+        raise
 
 
 def make_token(user_id: int) -> str:
