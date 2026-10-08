@@ -157,6 +157,29 @@ class ChannelPost(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class GiftCatalog(Base):
+    __tablename__ = "gift_catalog"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    emoji: Mapped[str] = mapped_column(String(16))
+    rarity: Mapped[str] = mapped_column(String(32), default="Обычный")
+    collection: Mapped[str] = mapped_column(String(80), default="RayfGram Gifts")
+    price_stars: Mapped[int] = mapped_column(Integer, default=0)
+    description: Mapped[str] = mapped_column(String(240), default="")
+
+
+class UserGift(Base):
+    __tablename__ = "user_gifts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    gift_id: Mapped[int] = mapped_column(ForeignKey("gift_catalog.id"), index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    sender_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    serial: Mapped[int] = mapped_column(Integer, index=True)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+
 class Reaction(Base):
     __tablename__ = "reactions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -224,6 +247,19 @@ async def init_db():
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocker_id ON blocks(blocker_id)")
         await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_blocks_blocked_id ON blocks(blocked_id)")
         await conn.exec_driver_sql("UPDATE users SET secondary_username = 'durov' WHERE LOWER(username) = 'monk'")
+        await conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_gift_serial ON user_gifts(gift_id, serial)")
+        async with SessionLocal() as seed_db:
+            existing = await seed_db.scalar(select(GiftCatalog).limit(1))
+            if not existing:
+                seed_db.add_all([
+                    GiftCatalog(code="heart_glow", name="Сияющее сердце", emoji="💖", rarity="Обычный", collection="RayfGram Gifts", price_stars=25, description="Тёплый подарок для близкого человека."),
+                    GiftCatalog(code="rose_crystal", name="Кристальная роза", emoji="🌹", rarity="Редкий", collection="RayfGram Gifts", price_stars=50, description="Коллекционная роза с хрустальным блеском."),
+                    GiftCatalog(code="golden_duck", name="Золотая уточка", emoji="🦆", rarity="Редкий", collection="RayfGram Icons", price_stars=75, description="Золотой символ удачи RayfGram."),
+                    GiftCatalog(code="diamond_star", name="Алмазная звезда", emoji="💎", rarity="Эпический", collection="RayfGram Icons", price_stars=150, description="Яркий коллекционный подарок высокой редкости."),
+                    GiftCatalog(code="cosmic_cat", name="Космический кот", emoji="🐱", rarity="Эпический", collection="RayfGram Space", price_stars=250, description="Кот из космической коллекции."),
+                    GiftCatalog(code="royal_crown", name="Корона Rayf", emoji="👑", rarity="Легендарный", collection="RayfGram Royals", price_stars=500, description="Редкая корона для настоящей легенды."),
+                ])
+                await seed_db.commit()
 
 
 @app.on_event("startup")
@@ -347,6 +383,61 @@ async def rayfstar(user: User = Depends(current_user)):
 async def stars(user: User = Depends(current_user)):
     return {"stars": int(user.stars or 0)}
 
+
+def gift_public(g: GiftCatalog, owner: UserGift | None = None) -> dict:
+    return {
+        "id": g.id, "code": g.code, "name": g.name, "emoji": g.emoji,
+        "rarity": g.rarity, "collection": g.collection, "price_stars": int(g.price_stars or 0),
+        "description": g.description,
+        "serial": owner.serial if owner else None,
+        "acquired_at": owner.acquired_at.isoformat() if owner else None,
+    }
+
+@app.get("/api/gifts/catalog")
+async def gift_catalog(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        rows = (await db.execute(select(GiftCatalog).order_by(GiftCatalog.price_stars, GiftCatalog.id))).scalars().all()
+        return [gift_public(g) for g in rows]
+
+@app.get("/api/gifts/mine")
+async def my_gifts(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        rows = (await db.execute(select(UserGift, GiftCatalog).join(GiftCatalog, GiftCatalog.id == UserGift.gift_id).where(UserGift.owner_id == user.id).order_by(UserGift.acquired_at.desc()))).all()
+        return [gift_public(g, ug) for ug, g in rows]
+
+@app.get("/api/gifts/user/{user_id}")
+async def user_gifts(user_id: int, user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        target = await db.get(User, user_id)
+        if not target or target.is_banned:
+            raise HTTPException(404, "Пользователь не найден")
+        rows = (await db.execute(select(UserGift, GiftCatalog).join(GiftCatalog, GiftCatalog.id == UserGift.gift_id).where(UserGift.owner_id == user_id).order_by(UserGift.acquired_at.desc()))).all()
+        return [gift_public(g, ug) for ug, g in rows]
+
+@app.post("/api/gifts/send")
+async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), user: User = Depends(current_user)):
+    if recipient_id == user.id:
+        raise HTTPException(400, "Нельзя подарить подарок самому себе")
+    async with SessionLocal() as db:
+        sender = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        recipient = await db.get(User, recipient_id)
+        gift = await db.get(GiftCatalog, gift_id)
+        if not recipient or recipient.is_banned:
+            raise HTTPException(404, "Получатель не найден")
+        if not gift:
+            raise HTTPException(404, "Подарок не найден")
+        price = int(gift.price_stars or 0)
+        if int(sender.stars or 0) < price:
+            raise HTTPException(400, f"Недостаточно звёзд. Нужно: {price} ⭐")
+        sender.stars = int(sender.stars or 0) - price
+        # Серийный номер коллекционного экземпляра внутри конкретной серии подарка.
+        last_serial = await db.scalar(select(UserGift.serial).where(UserGift.gift_id == gift.id).order_by(UserGift.serial.desc()).limit(1))
+        serial = int(last_serial or 0) + 1
+        ug = UserGift(gift_id=gift.id, owner_id=recipient.id, sender_id=sender.id, serial=serial)
+        db.add(ug)
+        await db.commit()
+        await db.refresh(ug)
+        return {"ok": True, "gift": gift_public(gift, ug), "stars": int(sender.stars or 0)}
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -1392,6 +1483,18 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .profile-status{margin-top:9px;color:#8ea2b1;font-size:14px;width:100%}
 .profile-usernames-info{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
 .profile-secondary-info{font-size:11px;color:#7f8b96;font-weight:400}
+.gifts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.gift-card{background:linear-gradient(180deg,#20252b,#171b20);border:1px solid #303740;border-radius:18px;padding:13px;text-align:center;box-shadow:0 8px 22px #0003;animation:rgSoftRise .3s ease both}
+.gift-card .gift-emoji{font-size:46px;line-height:1.1;filter:drop-shadow(0 5px 10px #0008)}
+.gift-card .gift-name{font-weight:800;margin-top:7px;font-size:14px}
+.gift-card .gift-rarity{font-size:11px;color:#aeb8c2;margin-top:3px}
+.gift-card .gift-price{font-size:13px;color:#ffd76a;margin-top:6px;font-weight:800}
+.gift-card button{width:100%;margin-top:9px;border:0;border-radius:11px;padding:9px;background:#2aabee;color:#fff;font-weight:800}
+.gift-serial{font-size:11px;color:#7f8b96;margin-top:4px}
+.gift-empty{padding:18px;text-align:center;color:#7f8b96;background:#171b20;border-radius:16px}
+.gift-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gift-title-row button{border:0;background:#252b32;color:#fff;border-radius:12px;padding:9px 12px;font-weight:700}
+@media(max-width:430px){.gifts-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gift-card{padding:10px}.gift-card .gift-emoji{font-size:40px}}
 .profile-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:12px 0 18px}
 .profile-action{background:#22272d;border:1px solid #2b333b;color:#fff;border-radius:18px;padding:13px 7px;font-weight:700;min-height:62px}
 .profile-action span{display:block;font-size:23px;margin-bottom:3px}
@@ -2143,7 +2246,7 @@ function openPublicProfile(username){
      </div>
      <div class="profile-actions">
        <button class="profile-action" onclick="closeDrawer();selectUser(${u.id})"><span>💬</span>Написать</button>
-       <button class="profile-action" onclick="showToast('Профиль открыт')"><span>👤</span>Профиль</button>
+       <button class="profile-action" onclick="openGifts(${u.id},'${esc(u.username)}')"><span>🎁</span>Подарки</button>
        <button class="profile-action" onclick="showToast('Дополнительно')"><span>⋮</span>Ещё</button>
      </div>
      <div class="profile-section">Информация</div>
@@ -2202,7 +2305,7 @@ function openProfile(){
    </div>
    <div class="profile-actions">
      <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
-     <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
+     <button class="profile-action" onclick="openGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
      <button class="profile-action" onclick="openSettings()"><span>⚙️</span>Настройки</button>
    </div>
    <input id="avatarPick" type="file" accept="image/*" hidden onchange="uploadAvatar()">
@@ -2253,6 +2356,26 @@ async function saveProfile(){
  }catch(e){showToast(e.message)}
 }
 async function uploadAvatar(){let f=$('avatarPick').files[0];if(!f)return;if(f.size>2*1024*1024){showToast('Аватар максимум 2 МБ');return}let fd=new FormData();fd.append('file',f);try{me=await api('/api/avatar',{method:'POST',body:fd});showToast('Аватар обновлён');openProfile();loadUsers()}catch(e){showToast(e.message)}}
+async function openGifts(userId, username){
+  try{
+    const [owned, catalog] = await Promise.all([api('/api/gifts/user/'+userId), api('/api/gifts/catalog')]);
+    const isMe = Number(userId)===Number(me.id);
+    const ownedHtml = owned.length ? owned.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-serial">#${g.serial}</div></div>`).join('') : '<div class="gift-empty">Подарков пока нет 🎁</div>';
+    const catalogHtml = !isMe ? `<div class="profile-section">Подарить</div><div class="gifts-grid">${catalog.map((g,i)=>`<div class="gift-card" style="animation-delay:${Math.min(i,8)*.04}s"><div class="gift-emoji">${g.emoji}</div><div class="gift-name">${esc(g.name)}</div><div class="gift-rarity">${esc(g.rarity)}</div><div class="gift-price">${g.price_stars} ⭐</div><button onclick="sendGift(${userId},${g.id},'${esc(g.name)}','${esc(username||'user')}')">Подарить</button></div>`).join('')}</div>` : '';
+    openDrawer(`<div class="gift-title-row"><h2>🎁 Подарки @${esc(username||'user')}</h2></div><div class="profile-section">Коллекция</div><div class="gifts-grid">${ownedHtml}</div>${catalogHtml}`);
+  }catch(e){showToast(e.message)}
+}
+async function sendGift(recipientId,giftId,name,recipientUsername){
+  if(!confirm('Подарить «'+name+'»?'))return;
+  try{
+    const fd=new FormData();fd.append('recipient_id',recipientId);fd.append('gift_id',giftId);
+    const d=await api('/api/gifts/send',{method:'POST',body:fd});
+    me.stars=d.stars;
+    showToast('🎁 Подарок отправлен! #'+d.gift.serial);
+    openGifts(recipientId, recipientUsername||'user');
+  }catch(e){showToast(e.message)}
+}
+
 async function openRayfStar(){
  try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
 }
