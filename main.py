@@ -1833,7 +1833,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .story-camera-btn{width:52px;height:52px;border-radius:18px;border:1px solid #2d3940;background:#151b1f;color:#fff;font-size:24px;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .16s ease,box-shadow .16s ease}
 .story-camera-btn:active{transform:scale(.92)}
 .story-ring{width:58px;height:58px;flex:0 0 58px;border-radius:50%;padding:2px;background:linear-gradient(135deg,#36d8ff 0%,#2878ff 48%,#6fe7d8 100%);box-shadow:0 0 8px rgba(48,177,255,.18);display:flex;align-items:center;justify-content:center;cursor:pointer}
-.story-ring>.avatar{width:54px;height:54px;box-shadow:0 0 0 1px #101010}
+.story-ring>.avatar{width:54px;height:54px;box-shadow:0 0 0 1px #101010}.story-ring.story-ring-chat{width:46px;height:46px;flex:0 0 46px;padding:1px;box-shadow:0 0 5px rgba(48,177,255,.12)}.story-ring.story-ring-chat>.chat-avatar{width:44px;height:44px;box-shadow:none}
 .story-profile-ring{width:140px;height:140px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
 .story-profile-ring.has-story{padding:2px;background:linear-gradient(135deg,#36d8ff 0%,#2878ff 48%,#6fe7d8 100%);box-shadow:0 0 12px rgba(48,177,255,.20)}
 .story-profile-ring .profile-avatar{margin:0!important}
@@ -2320,7 +2320,7 @@ function initials(u){return esc((u?.display_name||u?.username||'?').slice(0,1).t
 function avatarHtml(u,cls='avatar'){
  const hasStory=storyUserIds.has(Number(u?.id));
  const inner=u?.avatar?`<div class="${cls}"><img src="${u.avatar}?t=${Date.now()}"></div>`:`<div class="${cls}">${initials(u)}</div>`;
- return hasStory?`<div class="story-ring" onclick="event.stopPropagation();openStoryViewer(${Number(u?.id)},'${esc(u?.username||'user')}')">${inner}</div>`:inner;
+ const ringCls=cls==='chat-avatar'?'story-ring story-ring-chat':'story-ring'; return hasStory?`<div class="${ringCls}" onclick="event.stopPropagation();openStoryViewer(${Number(u?.id)},'${esc(u?.username||'user')}')">${inner}</div>`:inner;
 }
 function verifiedBadge(){
   return '<span class="verified-badge" title="Подтверждённый аккаунт" aria-label="Подтверждённый аккаунт"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12"></circle><path d="M7.3 12.4l3.05 3.05 6.45-6.9"></path></svg></span>';
