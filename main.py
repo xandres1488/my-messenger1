@@ -1539,14 +1539,16 @@ button,input,textarea{font:inherit}button{cursor:pointer;border:0}.hidden{displa
 .gift-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .gift-title-row button{border:0;background:#252b32;color:#fff;border-radius:12px;padding:9px 12px;font-weight:700}
 @media(max-width:430px){.gifts-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gift-card{padding:10px}.gift-card .gift-emoji{font-size:40px}}
-.profile-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 20px;width:100%}
-.profile-action{background:#22272d;border:1px solid #343c45;color:#fff;border-radius:18px;padding:15px 6px;font-weight:800;min-height:78px;width:100%;font-size:14px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:transform .16s ease,background .16s ease,border-color .16s ease}
-.profile-action span{display:block;font-size:28px;line-height:1;margin-bottom:7px}
+.profile-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0 20px;width:100%}
+.profile-actions.own-profile-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.profile-action{background:#22272d;border:1px solid #343c45;color:#fff;border-radius:15px;padding:10px 4px;font-weight:800;min-height:62px;width:100%;font-size:12px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:transform .16s ease,background .16s ease,border-color .16s ease}
+.profile-action span{display:block;font-size:22px;line-height:1;margin-bottom:5px}
 .profile-action:active{transform:scale(.96);background:#2a3037}
 @media(max-width:420px){
-  .profile-actions{gap:8px}
-  .profile-action{min-height:74px;padding:13px 4px;font-size:13px}
-  .profile-action span{font-size:26px}
+  .profile-actions{gap:6px}
+  .profile-actions.own-profile-actions{gap:5px}
+  .profile-action{min-height:58px;padding:9px 2px;font-size:11px;border-radius:14px}
+  .profile-action span{font-size:20px}
 }
 .profile-info{background:#171b20;border-radius:20px;overflow:hidden;border:1px solid #20262d}
 .profile-row{padding:14px 16px;border-bottom:1px solid #252a30}
@@ -2353,7 +2355,7 @@ function openProfile(){
      <div class="profile-username">@${esc(me.username)}</div>
      <div class="profile-status">${status}</div>
    </div>
-   <div class="profile-actions">
+   <div class="profile-actions own-profile-actions">
      <button class="profile-action" onclick="avatarPick.click()"><span>📷</span>Фото</button>
      <button class="profile-action" onclick="startProfileEdit()"><span>✏️</span>Изменить</button>
      <button class="profile-action" onclick="openGifts(me.id,me.username)"><span>🎁</span>Подарки</button>
