@@ -186,6 +186,16 @@ class PromoRedemption(Base):
     redeemed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class StarTransaction(Base):
+    __tablename__ = "star_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    subtitle: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class UserGift(Base):
     __tablename__ = "user_gifts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -404,6 +414,24 @@ async def rayfstar(user: User = Depends(current_user)):
     return {"stars": int(user.stars or 0)}
 
 
+@app.get("/api/rayfstar/transactions")
+async def rayfstar_transactions(user: User = Depends(current_user)):
+    async with SessionLocal() as db:
+        rows = (await db.execute(
+            select(StarTransaction)
+            .where(StarTransaction.user_id == user.id)
+            .order_by(StarTransaction.created_at.desc())
+            .limit(100)
+        )).scalars().all()
+        return [{
+            "id": x.id,
+            "amount": int(x.amount),
+            "title": x.title,
+            "subtitle": x.subtitle or "",
+            "created_at": x.created_at.isoformat() if x.created_at else None,
+        } for x in rows]
+
+
 @app.get("/api/stars")
 async def stars(user: User = Depends(current_user)):
     return {"stars": int(user.stars or 0)}
@@ -427,10 +455,17 @@ async def redeem_promo(code: str = Form(...), user: User = Depends(current_user)
         if already:
             raise HTTPException(400, "Этот промокод уже активирован на вашем аккаунте")
         account = await db.scalar(select(User).where(User.id == user.id).with_for_update())
-        account.stars = int(account.stars or 0) + int(promo.stars or 0)
+        added = int(promo.stars or 0)
+        account.stars = int(account.stars or 0) + added
         db.add(PromoRedemption(promo_id=promo.id, user_id=user.id))
+        db.add(StarTransaction(
+            user_id=account.id,
+            amount=added,
+            title=f"Пополнение +{added}⭐️",
+            subtitle="Ввод промокода",
+        ))
         await db.commit()
-        return {"ok": True, "added": int(promo.stars or 0), "stars": int(account.stars or 0)}
+        return {"ok": True, "added": added, "stars": int(account.stars or 0)}
 
 
 def gift_public(g: GiftCatalog, owner: UserGift | None = None, sender: User | None = None, owner_user: User | None = None) -> dict:
@@ -488,24 +523,35 @@ async def send_gift(recipient_id: int = Form(...), gift_id: int = Form(...), use
         price = int(gift.price_stars or 0)
         if int(sender.stars or 0) < price:
             raise HTTPException(400, f"Недостаточно звёзд. Нужно: {price} ⭐")
+
         sender.stars = int(sender.stars or 0) - price
-        # Серийный номер коллекционного экземпляра внутри конкретной серии подарка.
-        last_serial = await db.scalar(select(UserGift.serial).where(UserGift.gift_id == gift.id).order_by(UserGift.serial.desc()).limit(1))
+        last_serial = await db.scalar(
+            select(UserGift.serial)
+            .where(UserGift.gift_id == gift.id)
+            .order_by(UserGift.serial.desc())
+            .limit(1)
+        )
         serial = int(last_serial or 0) + 1
         ug = UserGift(gift_id=gift.id, owner_id=recipient.id, sender_id=sender.id, serial=serial)
         db.add(ug)
-        await db.commit()
-        await db.refresh(ug)
 
-        # Сохраняем подарок как обычное сообщение чата, чтобы его видели
-        # оба пользователя и он оставался в истории после перезагрузки.
+        # Важно: подарок и сообщение сохраняются одной транзакцией.
+        # Если сообщение не создастся, списание звёзд и подарок тоже откатятся.
         gift_message = Message(
             sender_id=sender.id,
-            recipient_id=recipient.id,
-            text=f"__RAYFGIFT__|{gift.id}|{gift.emoji}|{gift.name}|{price}",
+            receiver_id=recipient.id,
+            text=f"__RAYFGIFT__|{gift.id}|{gift.emoji}|{gift.name}|{price}|{sender.username}",
         )
         db.add(gift_message)
+        db.add(StarTransaction(
+            user_id=sender.id,
+            amount=-price,
+            title=f"Списание -{price}⭐️",
+            subtitle="Отправка подарка",
+        ))
+
         await db.commit()
+        await db.refresh(ug)
         await db.refresh(gift_message)
 
         return {
@@ -2010,6 +2056,13 @@ button,.send,.save,.icon,.chat-menu{
 
 .gift-chat-history{width:100%;display:flex;justify-content:center;margin:12px 0;animation:giftChatMessageIn .38s cubic-bezier(.2,.8,.2,1) both}
 .gift-chat-history .gift-chat-card{cursor:default}
+
+.star-tx-block{margin-top:4px;padding:14px 14px 6px;background:#151515;border:1px solid #242424;border-radius:18px}
+.star-tx-heading{font-size:17px;font-weight:700;margin:0 2px 8px}
+.star-tx-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 2px;border-top:1px solid #242424;animation:rgFade .28s ease both}
+.star-tx-main{min-width:0}.star-tx-title{font-size:15px;font-weight:600}.star-tx-sub{font-size:12px;color:#858585;margin-top:3px}
+.star-tx-amount{font-size:14px;font-weight:700;white-space:nowrap}.star-tx-amount.plus{color:#72d88b}.star-tx-amount.minus{color:#ff7474}
+.star-tx-empty{color:#858585;font-size:13px;padding:12px 2px 14px}
 </style>
 </head>
 <body>
@@ -2104,10 +2157,11 @@ function giftMessageHtml(text){
   const emoji=esc(p[2]||'🎁');
   const name=esc(p[3]||'Подарок');
   const price=Number(p[4]||0);
+  const senderUsername=esc(p[5]||'user');
   return `<div class="gift-chat-message gift-chat-history">
     <div class="gift-chat-card">
       <div class="gift-chat-emoji">${emoji}</div>
-      <div class="gift-chat-text">@${esc(me.username||'user')} отправил вам подарок!</div>
+      <div class="gift-chat-text">@${senderUsername} отправил вам подарок!</div>
       <div class="gift-chat-price">Стоимостью ${price}⭐️</div>
     </div>
   </div>`;
@@ -2591,7 +2645,26 @@ async function sendGift(recipientId,giftId,giftName,recipientUsername){
 }
 
 async function openRayfStar(){
- try{const d=await api('/api/rayfstar');openDrawer(`<h2>⭐ RayfStar</h2><div style="text-align:center;padding:30px 10px"><div style="font-size:64px;line-height:1">⭐</div><div style="font-size:34px;font-weight:700;margin-top:18px">${d.stars}</div><div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div></div>`)}catch(e){showToast(e.message)}
+ try{
+  const [d,tx]=await Promise.all([api('/api/rayfstar'),api('/api/rayfstar/transactions')]);
+  const rows=(tx||[]).map(t=>{
+    const positive=Number(t.amount)>=0;
+    return `<div class="star-tx-row">
+      <div class="star-tx-main"><div class="star-tx-title">${esc(t.title||'Транзакция')}</div><div class="star-tx-sub">${esc(t.subtitle||'')}</div></div>
+      <div class="star-tx-amount ${positive?'plus':'minus'}">${positive?'+':''}${Number(t.amount)}⭐️</div>
+    </div>`;
+  }).join('');
+  openDrawer(`<h2>⭐ RayfStar</h2>
+    <div style="text-align:center;padding:26px 10px 18px">
+      <div style="font-size:64px;line-height:1">⭐</div>
+      <div style="font-size:34px;font-weight:700;margin-top:18px">${Number(d.stars)||0}</div>
+      <div style="color:#8d8d8d;margin-top:6px">звёзд на аккаунте</div>
+    </div>
+    <div class="star-tx-block">
+      <div class="star-tx-heading">Транзакции</div>
+      ${rows||'<div class="star-tx-empty">Пока транзакций нет</div>'}
+    </div>`);
+ }catch(e){showToast(e.message)}
 }
 function openBuyStars(){openDrawer(`<h2>⭐ Купить звёзды</h2><div style="text-align:center;padding:45px 10px;color:#8d8d8d;font-size:18px">Скоро появится</div>`)}
 function openPromoCodes(){
